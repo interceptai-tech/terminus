@@ -1,0 +1,65 @@
+# Example Terminus Policy Configuration
+# This is a realistic starting policy for most organizations.
+
+version: "1.0"
+default_action: deny
+default_remediation_message: "Operation blocked by Terminus. Contact your security team or rewrite the query to comply with policy."
+
+policies:
+  - id: "allow_analytics_reads"
+    name: "Allow read-only analytics queries on approved tables"
+    priority: 10
+    match:
+      operation: ["SELECT"]
+      tables:
+        - "public.users"
+        - "public.orders"
+        - "analytics.*"
+      agent_ids:
+        - "analytics_agent_*"
+        - "reporting_cron"
+    action: allow
+
+  - id: "block_all_destructive_operations"
+    name: "Block destructive schema and data operations"
+    priority: 100
+    match:
+      operation: ["DROP", "TRUNCATE", "ALTER", "CREATE", "DELETE"]
+    action: deny
+    remediation:
+      message: "Destructive operations require explicit human approval or a safe alternative pattern (e.g. soft delete)."
+      auto_suggest: true
+
+  - id: "allow_controlled_updates"
+    name: "Allow updates only with WHERE clause on approved tables"
+    priority: 50
+    match:
+      operation: ["UPDATE"]
+      tables: ["public.users", "public.orders"]
+      conditions:
+        has_where: true
+    action: allow
+    remediation:
+      message: "UPDATE without a WHERE clause is blocked to prevent unintended mass updates."
+
+  - id: "allow_controlled_inserts"
+    name: "Allow inserts on approved tables (column allowlist still applies)"
+    priority: 50
+    match:
+      operation: ["INSERT"]
+      tables: ["public.users", "public.orders"]
+    action: allow
+    remediation:
+      message: "INSERT is allowed on approved tables, but only to allowlisted columns; list the specific columns you write."
+
+  - id: "rate_limit_experimental_agents"
+    name: "Soft guardrails on experimental / high-risk agents"
+    priority: 80
+    match:
+      agent_ids: ["experimental_agent_*", "research_*"]
+    action: allow
+    limits:
+      max_queries_per_minute: 60
+      max_destructive_risk_score: 0.2
+    remediation:
+      message: "Rate limit or risk threshold exceeded. Please slow down or request a policy exception."

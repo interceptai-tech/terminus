@@ -1,0 +1,262 @@
+groups:
+  - name: terminus
+    # Every alert also carries component: sidecar and team: security. The team
+    # label is a routing hint; adjust it to match your Alertmanager routes.
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Terminus process is unreachable (scrape target down).
+      # Threshold: immediate (1 min for:) -- if Prometheus cannot scrape the
+      # /metrics endpoint, the sidecar is either crashed or network-isolated.
+      # -----------------------------------------------------------------------
+      - alert: TerminusDown
+        expr: up{job="terminus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus sidecar is unreachable"
+          description: >
+            Prometheus cannot scrape terminus:8000/metrics. The sidecar may be
+            crashed or the container is not running. Check `make ps` and
+            `make logs`. All SQL interception is unavailable while this fires.
+
+      # -----------------------------------------------------------------------
+      # Deny-rate spike: sustained high fraction of denied requests.
+      # Threshold: >25% of all requests denied over a 5-minute window for 5 min.
+      # Normal deny rate in a well-configured deployment is low single digits.
+      # 25% sustained signals an attack probe, a broken agent firing bad SQL, or
+      # a misconfigured policy push that rejected a large query class.
+      # We divide by the REAL total and guard zero traffic with `and total > 0`
+      # (at zero traffic 0/0 is NaN, which does not fire anyway). We deliberately
+      # do NOT clamp the denominator: clamping to 1 would suppress a genuine
+      # high-deny spike at low (sub-1-rps) traffic, a fail-open for a security
+      # signal. Erring toward firing at low volume is the safe direction here.
+      # -----------------------------------------------------------------------
+      - alert: TerminusDenyRateHigh
+        expr: >
+          (
+            sum(rate(terminus_requests_total{action="deny"}[5m]))
+            /
+            sum(rate(terminus_requests_total[5m]))
+          ) > 0.25
+          and
+          sum(rate(terminus_requests_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus deny rate above 25% for 5 minutes"
+          description: >
+            More than 25% of intercepted SQL requests are being denied.
+            Check terminus_requests_total broken down by reason label to
+            identify which gate (schema_whitelist, policy_rule, etc.) is
+            firing. Could be an attack probe, a broken agent, or an
+            overly-restrictive recent policy change.
+
+      # -----------------------------------------------------------------------
+      # Parser latency p99 breach.
+      # Threshold: p99 > 2 ms (0.002 s) for 5 min.
+      # The catalog documents a < 2 ms target. The histogram has a 0.002 bucket
+      # so this threshold is directly resolvable. A rising p99 is the first
+      # sign of pathological queries or CPU contention on the sidecar host.
+      # -----------------------------------------------------------------------
+      - alert: TerminusParserLatencyHigh
+        expr: >
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(terminus_parser_latency_seconds_bucket[5m]))
+          ) > 0.002
+        for: 5m
+        labels:
+          severity: warning
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus parser p99 latency above 2 ms target"
+          description: >
+            The 99th-percentile parse-and-security-analysis time has exceeded
+            the 2 ms target for 5 minutes. Current value is visible in the
+            Grafana dashboard. Likely cause: an agent sending unusually large
+            or pathological SQL. Identify the offending agent_id in logs and
+            investigate its query patterns.
+
+      # -----------------------------------------------------------------------
+      # Smuggling attempts rising.
+      # Threshold: any sustained nonzero rate (>0.1/min average over 2 min).
+      # In normal operation smuggling detections should be zero. Any nonzero
+      # rate for more than 2 minutes means someone is actively probing, not a
+      # single accidental hit.
+      # -----------------------------------------------------------------------
+      - alert: TerminusSmugglingAttemptsDetected
+        expr: sum(rate(terminus_smuggling_attempts_total[2m])) > 0.1 / 60
+        for: 2m
+        labels:
+          severity: critical
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus is detecting SQL smuggling attempts"
+          description: >
+            terminus_smuggling_attempts_total is growing at more than 0.1 per
+            minute. This means the parser is flagging comment obfuscation,
+            hidden subqueries, or injection function patterns. Check the reason
+            label breakdown and the audit log for the agent_id involved.
+
+      # -----------------------------------------------------------------------
+      # Outbound Hub: payloads failing after all retries.
+      # Threshold: any sustained rate > 0 for 10 min.
+      # A transient retry burst from a momentary Hub hiccup resolves quickly.
+      # 10 minutes of sustained failures means the Hub is down or rejecting.
+      # The sidecar sheds telemetry to protect memory; no request path impact,
+      # but signature intelligence stops flowing upstream.
+      # -----------------------------------------------------------------------
+      - alert: TerminusSignatureOutboundFailing
+        expr: sum(rate(terminus_signature_outbound_failed_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus outbound signature POST is failing"
+          description: >
+            terminus_signature_outbound_failed_total is growing for more than
+            10 minutes. Payloads are being dropped after exhausting all POST
+            retries. The Hub is likely down or rejecting requests. SQL
+            interception is unaffected, but telemetry is being lost. Check
+            TERMINUS_SIGNATURE_HUB_URL and Hub health.
+
+      # -----------------------------------------------------------------------
+      # Outbound Hub: buffer overflow (telemetry being shed).
+      # Threshold: any sustained rate > 0 for 5 min.
+      # Buffer overflow happens after the Hub has been down long enough to fill
+      # the in-memory queue. This is a step beyond the _failed alert and means
+      # data is actively being discarded. Raise
+      # TERMINUS_SIGNATURE_OUTBOUND_BUFFER_MAX if the Hub outage is expected to
+      # be prolonged.
+      # -----------------------------------------------------------------------
+      - alert: TerminusSignatureOutboundDropped
+        expr: sum(rate(terminus_signature_outbound_dropped_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus outbound buffer is overflowing, payloads are being shed"
+          description: >
+            terminus_signature_outbound_dropped_total is growing. The outbound
+            buffer is at capacity and oldest payloads are being discarded.
+            This means the Hub has been unreachable long enough to fill the
+            queue. Restore Hub connectivity or raise
+            TERMINUS_SIGNATURE_OUTBOUND_BUFFER_MAX to buffer more while
+            investigating.
+
+      # -----------------------------------------------------------------------
+      # Config reload failures.
+      # Threshold: any sustained rate > 0 for 5 min.
+      # A single reload failure is worth knowing about immediately -- it means
+      # a bad config push was sent and rejected. The last-known-good config is
+      # retained (no outage), but the intended config change did not apply.
+      # -----------------------------------------------------------------------
+      - alert: TerminusConfigReloadFailing
+        expr: sum(rate(terminus_config_reload_total{result="failed"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus governance config reload is failing"
+          description: >
+            terminus_config_reload_total{result="failed"} is increasing. A
+            governance config push was rejected and last-known-good is being
+            retained. No outage, but the intended policy change is not in
+            effect. Check config_reload_failed log events for the named error
+            and fix the config file before the next reload attempt.
+
+      # -----------------------------------------------------------------------
+      # Config staleness: last successful reload is very old.
+      # Threshold: more than 1 hour since the last applied reload timestamp,
+      # AND at least one reload attempt has been recorded (i.e., hot-reload is
+      # enabled on this instance). Skipping installs with no reload history
+      # avoids false positives on deployments where hot-reload is off.
+      # -----------------------------------------------------------------------
+      - alert: TerminusConfigStale
+        expr: >
+          (
+            (time() - terminus_config_last_reload_timestamp) > 3600
+          )
+          and
+          (
+            sum(terminus_config_reload_total) > 0
+          )
+        for: 5m
+        labels:
+          severity: warning
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus governance config has not been successfully reloaded in over 1 hour"
+          description: >
+            terminus_config_last_reload_timestamp is more than 3600 seconds
+            (1 hour) in the past. If hot-reload is active and policy files are
+            being updated, a sustained gap here means all recent reload
+            attempts are failing. Check terminus_config_reload_total{result}
+            breakdown and config_reload_failed log events.
+
+      # -----------------------------------------------------------------------
+      # Rate limiter unavailable: the Redis-backed throttle is down or erroring.
+      # Threshold: any sustained increments over 5 min.
+      # Rate limiting is a guardrail that FAILS OPEN by design: the core SQL
+      # circuit breaker keeps enforcing, only the per-agent throttle is off. So
+      # this is a degradation (warning), not an outage. The counter climbs per
+      # skipped request while Redis is down. Restore Redis to re-arm throttling.
+      # -----------------------------------------------------------------------
+      - alert: TerminusRateLimiterUnavailable
+        expr: rate(terminus_rate_limiter_unavailable_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus rate limiter is unavailable (Redis health)"
+          description: >
+            terminus_rate_limiter_unavailable_total is increasing: the
+            Redis-backed rate limiter is down or erroring, so per-agent
+            throttling is disabled (fail-open). The core SQL circuit breaker is
+            unaffected and still enforcing; this is a degraded guardrail, not an
+            outage. Restore Redis connectivity to re-arm throttling. Check the
+            rate_limiter_unavailable / rate_limit_skipped log events and Redis.
+
+      # -----------------------------------------------------------------------
+      # Inbound signature-bundle updates failing.
+      # Threshold: any sustained increments over 10 min.
+      # This is the THREAT-INTELLIGENCE corpus, NOT auth/JWT. A failing update
+      # means the matcher keeps its last-known-good known-bad set: detection
+      # continues on existing signatures, but new threat intel is not applied.
+      # Likely a bad bundle source, a rotated/mismatched public key, or network.
+      # -----------------------------------------------------------------------
+      - alert: TerminusSignatureBundleUpdateFailed
+        expr: rate(terminus_signature_bundle_update_failed_total[5m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: sidecar
+          team: security
+        annotations:
+          summary: "Terminus inbound signature-bundle updates are failing"
+          description: >
+            terminus_signature_bundle_update_failed_total is increasing. Inbound
+            signed signature bundles are not being applied; the matcher retains
+            its last-known-good corpus, so detection continues on existing
+            signatures but new threat intelligence is not flowing in. This is the
+            signature/threat-intel path, NOT JWT or auth. Check
+            TERMINUS_SIGNATURE_BUNDLE_SOURCE, the pinned public key (rotation?),
+            and the signature_bundle_update_failed log events.

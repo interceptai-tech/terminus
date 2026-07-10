@@ -1,0 +1,20 @@
+# Example Terminus Agent Registry
+#
+# The set of agent identities Terminus will accept once JWT auth is enabled.
+# A token's `sub` claim must match an `id` here with status active, otherwise
+# the request is rejected (401) even with a valid signature. This is how an
+# agent is revoked without rotating the signing secret: set status: disabled
+# (or remove the entry).
+version: "1.0"
+
+agents:
+  - id: analytics_agent_42
+    description: "Production analytics reader"
+  - id: reporting_cron
+    description: "Nightly reporting job"
+  - id: experimental_agent_7
+    description: "Sandbox agent, currently deregistered"
+    status: disabled
+  - id: onboarding_agent_9
+    description: "Example observe-mode agent being evaluated for promotion"
+    trust_level: observe

@@ -1,0 +1,98 @@
+# LOCAL/DEMO STACK. Before pointing anything production-shaped at this file,
+# read the "Hardening for production" checklist in docs/operations.md:
+# bind Redis to the internal network only and set a password, rotate the
+# Grafana admin credentials, network-restrict /metrics to your scraper,
+# set real TERMINUS_JWT_SECRET / TERMINUS_AUDIT_HMAC_KEY, and run exactly
+# one worker per container. Do not copy docker-compose.override.yml to prod.
+
+services:
+
+  terminus:
+    build: .
+    container_name: terminus-terminus-1
+    ports:
+      - "8000:8000"
+    environment:
+      # This base file is FAIL-CLOSED: it does not set TERMINUS_ENVIRONMENT (so it
+      # defaults to `production`) and does not supply secrets, so on the shipped
+      # default secrets the production guard REFUSES to boot. `make up` (plain
+      # `docker compose`) also auto-merges docker-compose.override.yml, which adds
+      # the demo `development` env + placeholder secret so the local stack runs.
+      # A real deployment sets TERMINUS_ENVIRONMENT=production and real
+      # TERMINUS_JWT_SECRET / TERMINUS_AUDIT_HMAC_KEY here (do not rely on the
+      # override, and do not copy it).
+      - TERMINUS_REDIS_URL=redis://redis:6379/0
+      - TERMINUS_REDIS_HOST=redis
+      - TERMINUS_REDIS_PORT=6379
+      - TERMINUS_LOG_LEVEL=INFO
+      - TERMINUS_RATE_LIMIT_PER_MINUTE=10
+    command: ["./wait-for-redis.sh", "python", "-m", "uvicorn", "terminus.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - terminus-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: terminus-redis-1
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+    networks:
+      - terminus-net
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: terminus-prometheus-1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus:/etc/prometheus/rules:ro
+    networks:
+      - terminus-net
+    depends_on:
+      - terminus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: terminus-grafana-1
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      # Auto-provision the Prometheus datasource and the Terminus dashboard.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - terminus-net
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  grafana-storage:
+
+networks:
+  terminus-net:
+    driver: bridge

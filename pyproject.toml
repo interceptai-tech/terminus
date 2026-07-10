@@ -1,0 +1,109 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "terminus"
+version = "0.1.0"
+description = "The Circuit Breaker for Autonomous Data Operations — runtime governance and remediation for AI agent database access"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Terminus Contributors"}
+]
+keywords = ["ai", "agents", "security", "guardrails", "database", "circuit-breaker", "compliance"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Database",
+]
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "sqlglot>=25.0.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "structlog>=24.0.0",
+    "prometheus-client>=0.20.0",
+    "pyjwt>=2.8",
+    "pyyaml>=6.0",
+    "cryptography>=42",
+    "mcp>=1.2",
+    "asyncpg>=0.30",
+    # fastapi-limiter is imported unconditionally at runtime (main.py,
+    # interceptor/router.py), not just in tests: it must ship in the runtime
+    # image. Pinned to 0.1.5 on purpose (see CLAUDE.md gotchas): 0.1.6+ removed
+    # the FastAPILimiter class and upstream's route scan breaks on current FastAPI.
+    "fastapi-limiter==0.1.5",
+    # httpx is imported at module scope by signature/update_client.py and
+    # outbound.py (and main.py imports from update_client unconditionally), so it
+    # must ship in every install, not just [dev]. Previously present in no-dev
+    # installs only via mcp's transitive dependency (GAPS L9).
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-benchmark>=4.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+    "black>=24.8.0",
+    "isort>=5.13.0",
+    # httpx2 is the client starlette.testclient now needs;
+    # without it the suite emits StarletteDeprecationWarning. Bounded pin on purpose.
+    "httpx2>=2.5,<3",
+    "types-PyYAML>=6.0",
+]
+dogfood = [
+    "langgraph>=0.2",
+    "langchain-anthropic>=0.3",
+    "langchain-mcp-adapters>=0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/terminus"
+Documentation = "https://github.com/your-org/terminus#readme"
+Repository = "https://github.com/your-org/terminus"
+Issues = "https://github.com/your-org/terminus/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/terminus"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]

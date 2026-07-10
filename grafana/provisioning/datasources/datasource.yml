@@ -1,0 +1,15 @@
+# Auto-provisions the Prometheus datasource so Grafana works on first boot.
+# The fixed uid lets the bundled Terminus dashboard reference it directly.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s

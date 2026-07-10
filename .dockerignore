@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.env
+.venv/
+.git/
+.gitignore
+SECURITY.md
+prometheus.yml
+grafana/
+tests/
+docs/
+.github/
+codecov.yml
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

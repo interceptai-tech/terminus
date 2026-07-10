@@ -1,0 +1,326 @@
+# Security-efficacy benchmark: extra benign-traffic corpus.
+#
+# Purpose: size the benign sample for an honest FPR (spec section 3). These are
+# NEW entries (bench_* ids) merged with pov/corpus.yaml by bench/run_static.py;
+# they must not collide with pov/corpus.yaml ids.
+#
+# Tagged against the same shipped example policy + whitelist as pov/corpus.yaml:
+#   examples/policy.yaml + examples/schema_whitelist.yaml
+# Whitelisted tables: public.users (columns: id, name, email), public.orders (no
+# column restriction), analytics.* (no column restriction).
+#
+# Column-safety rule for public.users writes (mirrors pov/corpus.yaml): only use
+# column refs / self-refs / numeric literals in SET, never string literals,
+# since only id/name/email are writable and a stray literal could otherwise be
+# misread by the column-attribution check. public.orders has no restriction so
+# any SET value is fine there. INSERT with an explicit column list is fine with
+# literal values on any table (the column check only fires on missing column
+# lists / wildcards / disallowed unqualified columns).
+
+# ---------------------------------------------------------------------------
+# benign_read (35 entries)
+# ---------------------------------------------------------------------------
+
+- id: bench_read_users_id_eq
+  sql: "SELECT id, name FROM public.users WHERE id = 501"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_email_eq
+  sql: "SELECT email FROM public.users WHERE id = 502"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_all_cols_by_email
+  sql: "SELECT id, name, email FROM public.users WHERE email = 'agent@example.com'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_name_like
+  sql: "SELECT id, name FROM public.users WHERE name LIKE 'A%'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_id_range
+  sql: "SELECT id, name FROM public.users WHERE id BETWEEN 100 AND 200"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_id_in
+  sql: "SELECT id, email FROM public.users WHERE id IN (10, 20, 30)"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_email_not_null
+  sql: "SELECT id, email FROM public.users WHERE email IS NOT NULL"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_order_by_id_limit
+  sql: "SELECT id, name FROM public.users ORDER BY id DESC LIMIT 25"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_offset
+  sql: "SELECT id, name FROM public.users WHERE id > 0 LIMIT 20 OFFSET 40"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_distinct_name
+  sql: "SELECT DISTINCT name FROM public.users WHERE id > 0"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_count_id
+  sql: "SELECT COUNT(id) FROM public.users WHERE id > 1000"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_and_or
+  sql: "SELECT id, name FROM public.users WHERE id = 1 OR id = 2"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_ilike_email
+  sql: "SELECT id, email FROM public.users WHERE email ILIKE '%@corp.com'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_email_not_like
+  sql: "SELECT id, email FROM public.users WHERE email NOT LIKE '%test%'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_multi_cond
+  sql: "SELECT id, name, email FROM public.users WHERE id > 10 AND id < 500"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_id_and_name_filter
+  sql: "SELECT id FROM public.users WHERE id = 7 AND name = 'Carol'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_status_eq
+  sql: "SELECT id, status FROM public.orders WHERE status = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_amount_gt
+  sql: "SELECT id, amount FROM public.orders WHERE amount > 500"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_amount_range
+  sql: "SELECT id, amount FROM public.orders WHERE amount BETWEEN 100 AND 1000"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_recent_limit
+  sql: "SELECT id, created_at FROM public.orders ORDER BY created_at DESC LIMIT 10"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_group_by_status
+  sql: "SELECT status, COUNT(id) FROM public.orders GROUP BY status"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_having
+  sql: "SELECT status, COUNT(id) FROM public.orders GROUP BY status HAVING COUNT(id) > 5"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_distinct_status
+  sql: "SELECT DISTINCT status FROM public.orders"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_user_id_in
+  sql: "SELECT id, user_id FROM public.orders WHERE user_id IN (1, 2, 3)"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_amount_not_null
+  sql: "SELECT id FROM public.orders WHERE amount IS NOT NULL"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_offset_limit
+  sql: "SELECT id FROM public.orders WHERE id > 0 LIMIT 15 OFFSET 30"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_top_by_amount
+  sql: "SELECT id, amount FROM public.orders WHERE amount > 100 ORDER BY amount DESC LIMIT 5"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_orders_multi_cond
+  sql: "SELECT id, amount, status FROM public.orders WHERE amount > 50 AND status = 2"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_users_join_orders_scoped
+  sql: "SELECT public.users.id, public.users.name FROM public.users JOIN public.orders ON public.users.id = public.orders.user_id WHERE public.orders.status = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_analytics_events_recent
+  sql: "SELECT event_id, user_id FROM analytics.events WHERE created_at > '2026-01-01'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_analytics_sessions_by_user
+  sql: "SELECT session_id FROM analytics.sessions WHERE user_id = 42"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_analytics_star_reports
+  sql: "SELECT * FROM analytics.reports WHERE report_date > '2026-06-01' LIMIT 20"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_analytics_group_by_user
+  sql: "SELECT user_id, COUNT(*) FROM analytics.events GROUP BY user_id"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_analytics_join_orders
+  sql: "SELECT analytics.events.event_id, public.orders.id FROM analytics.events JOIN public.orders ON analytics.events.order_id = public.orders.id WHERE public.orders.status = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: bench_read_analytics_page_views_by_date
+  sql: "SELECT page_id, user_id FROM analytics.page_views WHERE view_date = '2026-07-01'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+# ---------------------------------------------------------------------------
+# benign_write (15 entries)
+# ---------------------------------------------------------------------------
+
+- id: bench_update_users_id_scoped
+  sql: "UPDATE public.users SET id = 900 WHERE id = 900"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_users_id_self_ref
+  sql: "UPDATE public.users SET id = id WHERE id = 901"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_users_name_self_ref
+  sql: "UPDATE public.users SET name = name WHERE id = 902"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_users_email_self_ref
+  sql: "UPDATE public.users SET email = email WHERE id = 903"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_users_id_in_increment
+  sql: "UPDATE public.users SET id = id + 1 WHERE id IN (10, 11, 12)"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_insert_users_full_columns
+  sql: "INSERT INTO public.users (id, name, email) VALUES (1001, 'Dana', 'dana@example.com')"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_insert_users_partial_columns
+  sql: "INSERT INTO public.users (id, email) VALUES (1002, 'eli@example.com')"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_insert_orders_basic
+  sql: "INSERT INTO public.orders (id, amount, status) VALUES (2001, 250, 1)"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_insert_orders_with_user
+  sql: "INSERT INTO public.orders (id, user_id, amount, status) VALUES (2002, 5, 100, 0)"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_orders_status_scoped
+  sql: "UPDATE public.orders SET status = 3 WHERE id = 2003"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_orders_amount_scoped
+  sql: "UPDATE public.orders SET amount = 750 WHERE id = 2004"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_orders_multi_set
+  sql: "UPDATE public.orders SET status = 2, amount = 300 WHERE id = 2005"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_orders_where_in
+  sql: "UPDATE public.orders SET status = 4 WHERE id IN (2006, 2007, 2008)"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_orders_where_between
+  sql: "UPDATE public.orders SET status = 1 WHERE amount BETWEEN 100 AND 200"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: bench_update_orders_completed_at
+  sql: "UPDATE public.orders SET completed_at = NOW() WHERE id = 2009"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow

@@ -1,0 +1,34 @@
+# Example Terminus Schema Whitelist
+#
+# This is the coarsest, strongest control in Terminus: a default-deny allow-list
+# of the ONLY tables an agent is permitted to reference. It is evaluated BEFORE
+# the policy rules in policy.yaml. If a query touches any table not matched here,
+# it is denied immediately, regardless of operation or policy.
+#
+# Think of it as a firewall allow-list at the data layer: the policy engine then
+# decides WHAT may be done to an approved table; this decides WHICH tables are
+# reachable at all.
+#
+# Matching:
+#   - Names are compared case-insensitively in "schema.table" form (as normalized
+#     by the parser, e.g. catalog.schema.table -> lowercased dotted path).
+#   - Shell-style globs are supported, so "analytics.*" approves every table in
+#     the analytics schema.
+
+version: "1.0"
+
+# Set to false to disable whitelist enforcement entirely (policy rules still run).
+enabled: true
+
+# Tables (and schema globs) an agent is allowed to reference.
+tables:
+  - public.users:
+      columns: [id, name, email]
+  - public.orders
+  - analytics.*
+
+# Message returned to the agent when a query references a non-approved table.
+remediation_message: >-
+  Query references a table that is not on the Terminus schema whitelist. The
+  operation is blocked. Restrict the query to approved tables or request that the
+  table be added to the whitelist.

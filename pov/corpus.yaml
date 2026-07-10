@@ -1,0 +1,1920 @@
+# Terminus PoV validation corpus.
+#
+# ~250 tagged SQL entries for the PoV harness (Task 2).
+# Each entry is tagged against the shipped example policy + whitelist:
+#   examples/policy.yaml + examples/schema_whitelist.yaml
+#
+# Tagging rules (spot-checked against the live engine):
+#   - benign_read / benign_write -> allow (valid reads/writes on approved tables/columns)
+#   - all other categories -> deny
+#   - self_correctable: true ONLY for wildcard column_violation (SELECT *: Terminus
+#     returns suggested_sql) and for dangerous_dml UPDATE-without-WHERE on an
+#     approved table (adding a WHERE makes it pass); col_disallowed_* are false
+#   - expected_reason_code is set only when confident of the exact gate
+#
+# Whitelisted tables: public.users (columns: id, name, email), public.orders (no col
+# restriction), analytics.* (no col restriction).
+# Destructive ops (DROP/ALTER/CREATE/DELETE) -> policy rule deny.
+# TRUNCATE parses as TRUNCATETABLE (no matching policy rule) -> default deny.
+# UPDATE without WHERE falls through to default deny (no reason_code set).
+
+# ---------------------------------------------------------------------------
+# benign_read (40 entries) — valid SELECTs on approved tables/columns
+# ---------------------------------------------------------------------------
+
+- id: read_users_by_id
+  sql: "SELECT id, name FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_email_by_id
+  sql: "SELECT email FROM public.users WHERE id = 42"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_all_cols
+  sql: "SELECT id, name, email FROM public.users WHERE id = 7"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_name_filter
+  sql: "SELECT id, name FROM public.users WHERE name = 'Alice'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_id_only
+  sql: "SELECT id FROM public.users WHERE id = 99"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_limit
+  sql: "SELECT id, name FROM public.users WHERE id > 0 LIMIT 10"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_order_by
+  sql: "SELECT id, name FROM public.users ORDER BY id ASC"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_count
+  sql: "SELECT id FROM public.users WHERE id < 100 LIMIT 50"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_recent
+  sql: "SELECT id FROM public.orders WHERE created_at > '2026-01-01'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_by_id
+  sql: "SELECT id FROM public.orders WHERE id = 10"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_limit
+  sql: "SELECT id FROM public.orders LIMIT 20"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_status_filter
+  sql: "SELECT id FROM public.orders WHERE status = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_user_id
+  sql: "SELECT id FROM public.orders WHERE user_id = 3"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_amount_gt
+  sql: "SELECT id FROM public.orders WHERE amount > 100"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_events
+  sql: "SELECT id FROM analytics.events WHERE user_id = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_star
+  sql: "SELECT * FROM analytics.events"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_sessions
+  sql: "SELECT * FROM analytics.sessions WHERE started_at > '2026-01-01'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_page_views
+  sql: "SELECT * FROM analytics.page_views LIMIT 100"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_funnels
+  sql: "SELECT * FROM analytics.funnels WHERE step = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_conversions
+  sql: "SELECT * FROM analytics.conversions WHERE campaign_id = 5"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_name_only
+  sql: "SELECT name FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_email_only
+  sql: "SELECT email FROM public.users WHERE id = 5"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_in_clause
+  sql: "SELECT id, name FROM public.users WHERE id IN (1, 2, 3)"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_between
+  sql: "SELECT id FROM public.users WHERE id BETWEEN 1 AND 100"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_like
+  sql: "SELECT id, name FROM public.users WHERE name LIKE 'A%'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_subquery_users
+  sql: "SELECT id FROM public.orders WHERE user_id IN (1, 2, 3, 4, 5)"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_join_orders
+  sql: "SELECT public.users.id, public.users.name FROM public.users JOIN public.orders ON public.users.id = public.orders.user_id WHERE public.users.id = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_metrics
+  sql: "SELECT * FROM analytics.metrics WHERE metric_name = 'dau'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_reports
+  sql: "SELECT * FROM analytics.reports WHERE created_at > '2026-01-01' LIMIT 50"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_ilike
+  sql: "SELECT id, email FROM public.users WHERE email ILIKE '%@example.com'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_not_null
+  sql: "SELECT id FROM public.orders WHERE completed_at IS NOT NULL"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_null
+  sql: "SELECT id FROM public.orders WHERE cancelled_at IS NULL"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_not_in
+  sql: "SELECT id, name FROM public.users WHERE id NOT IN (5, 10)"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_impressions
+  sql: "SELECT * FROM analytics.impressions WHERE ad_id = 7"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_clicks
+  sql: "SELECT * FROM analytics.clicks WHERE campaign_id = 2"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_limit_offset
+  sql: "SELECT id, name FROM public.users LIMIT 10 OFFSET 20"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_group_by
+  sql: "SELECT user_id FROM public.orders WHERE created_at > '2026-01-01' GROUP BY user_id"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_cohorts
+  sql: "SELECT * FROM analytics.cohorts WHERE cohort_date = '2026-06-01'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_distinct
+  sql: "SELECT DISTINCT user_id FROM public.orders WHERE amount > 50"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_and_condition
+  sql: "SELECT id, name FROM public.users WHERE id > 10 AND id < 100"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+# ---------------------------------------------------------------------------
+# benign_write (15 entries) — UPDATE with WHERE on approved tables
+# Using column refs (not string literals) for public.users to avoid column check
+# triggering on string values parsed as column names.
+# public.orders has no column restriction, any SET value works.
+# ---------------------------------------------------------------------------
+
+- id: update_users_id_scoped
+  sql: "UPDATE public.users SET id = 100 WHERE id = 1"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_users_id_increment
+  sql: "UPDATE public.users SET id = id + 1 WHERE id = 5"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: insert_users_allowlisted_columns
+  sql: "INSERT INTO public.users (id, name, email) VALUES (1, 'a', 'a@x.com')"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: insert_orders_unrestricted_table
+  sql: "INSERT INTO public.orders (id, amount, status) VALUES (1, 5, 2)"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_status_scoped
+  sql: "UPDATE public.orders SET status = 2 WHERE id = 10"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_amount_scoped
+  sql: "UPDATE public.orders SET amount = 250 WHERE id = 7"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_user_id
+  sql: "UPDATE public.orders SET user_id = 3 WHERE id = 5"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_created_at
+  sql: "UPDATE public.orders SET created_at = NOW() WHERE id = 1"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_quantity
+  sql: "UPDATE public.orders SET quantity = 3 WHERE order_id = 42"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_completed
+  sql: "UPDATE public.orders SET completed_at = NOW() WHERE id = 99"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_multi_col
+  sql: "UPDATE public.orders SET status = 1, amount = 500 WHERE id = 8"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_in_clause
+  sql: "UPDATE public.orders SET status = 0 WHERE id IN (1, 2, 3)"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_subquery
+  sql: "UPDATE public.orders SET status = 1 WHERE user_id IN (10, 20, 30)"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_users_email_self_ref
+  sql: "UPDATE public.users SET email = email WHERE id = 10"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_users_name_self_ref
+  sql: "UPDATE public.users SET name = name WHERE id = 20"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_cancelled
+  sql: "UPDATE public.orders SET cancelled_at = NOW() WHERE id = 55"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_flag_scoped
+  sql: "UPDATE public.orders SET is_reviewed = 1 WHERE id = 77"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+# ---------------------------------------------------------------------------
+# destructive_ddl (25 entries) — DROP, ALTER, CREATE, TRUNCATE operations
+# DROP/ALTER/CREATE matched by policy rule (reason_code: policy_rule)
+# TRUNCATE parses as TRUNCATETABLE, falls to default deny (reason_code: default)
+# Don't set expected_reason_code for TRUNCATE entries.
+# ---------------------------------------------------------------------------
+
+- id: drop_users
+  sql: "DROP TABLE public.users"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: drop_orders
+  sql: "DROP TABLE public.orders"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: drop_analytics_events
+  sql: "DROP TABLE analytics.events"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: drop_if_exists
+  sql: "DROP TABLE IF EXISTS public.users"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: drop_index_users
+  sql: "DROP INDEX idx_users_email"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: alter_add_column
+  sql: "ALTER TABLE public.users ADD COLUMN age INT"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: alter_drop_column
+  sql: "ALTER TABLE public.users DROP COLUMN email"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: alter_modify_column
+  sql: "ALTER TABLE public.orders ALTER COLUMN amount TYPE NUMERIC(12,2)"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: alter_rename_table
+  sql: "ALTER TABLE public.users RENAME TO public.users_old"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: alter_add_constraint
+  sql: "ALTER TABLE public.orders ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES public.users(id)"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: create_index_users
+  sql: "CREATE INDEX idx_users_email ON public.users (email)"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: create_index_orders
+  sql: "CREATE INDEX idx_orders_status ON public.orders (status)"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: create_view_users
+  sql: "CREATE VIEW user_summary AS SELECT id, name FROM public.users"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: create_unique_index
+  sql: "CREATE UNIQUE INDEX uidx_users_email ON public.users (email)"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: truncate_users
+  sql: "TRUNCATE public.users"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: truncate_orders
+  sql: "TRUNCATE public.orders"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: truncate_analytics_events
+  sql: "TRUNCATE analytics.events"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: truncate_table_keyword
+  sql: "TRUNCATE TABLE public.users"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: truncate_cascade
+  sql: "TRUNCATE TABLE public.orders CASCADE"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: drop_schema
+  sql: "DROP SCHEMA analytics CASCADE"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: drop_database
+  sql: "DROP DATABASE production"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: alter_set_not_null
+  sql: "ALTER TABLE public.users ALTER COLUMN name SET NOT NULL"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: create_sequence
+  sql: "CREATE SEQUENCE public.users_id_seq"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: drop_constraint
+  sql: "ALTER TABLE public.orders DROP CONSTRAINT fk_user"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  self_correctable: false
+
+- id: create_trigger
+  sql: "CREATE TRIGGER trg_audit AFTER UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION audit_fn()"
+  dialect: postgres
+  category: destructive_ddl
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+# ---------------------------------------------------------------------------
+# dangerous_dml (25 entries)
+# UPDATE without WHERE -> default deny, self_correctable: true (adding WHERE fixes it)
+#   Only for public.users and public.orders (approved tables); don't set reason_code
+# DELETE (any form) -> policy_rule deny, self_correctable: false
+# ---------------------------------------------------------------------------
+
+# UPDATE without WHERE on approved tables (self_correctable: true)
+- id: update_users_no_where
+  sql: "UPDATE public.users SET id = 0"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: update_orders_no_where
+  sql: "UPDATE public.orders SET status = 0"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: update_users_mass_id
+  sql: "UPDATE public.users SET id = id + 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: update_orders_mass_amount
+  sql: "UPDATE public.orders SET amount = 0"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: update_users_mass_multi
+  sql: "UPDATE public.users SET id = 0, name = name"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: update_orders_mass_user_id
+  sql: "UPDATE public.orders SET user_id = 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: update_orders_mass_status
+  sql: "UPDATE public.orders SET status = 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: update_users_mass_email
+  sql: "UPDATE public.users SET email = email"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+# DELETE on approved tables (self_correctable: false)
+- id: delete_all_users
+  sql: "DELETE FROM public.users"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_all_orders
+  sql: "DELETE FROM public.orders"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_users_by_id
+  sql: "DELETE FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_orders_by_id
+  sql: "DELETE FROM public.orders WHERE id = 10"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_users_old
+  sql: "DELETE FROM public.users WHERE id < 100"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_orders_cancelled
+  sql: "DELETE FROM public.orders WHERE cancelled_at IS NOT NULL"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_analytics_events
+  sql: "DELETE FROM analytics.events WHERE created_at < '2025-01-01'"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_orders_user
+  sql: "DELETE FROM public.orders WHERE user_id = 5"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_analytics_sessions
+  sql: "DELETE FROM analytics.sessions WHERE ended_at < '2025-01-01'"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_users_inactive
+  sql: "DELETE FROM public.users WHERE id > 9000"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: update_orders_no_where_2
+  sql: "UPDATE public.orders SET completed_at = NOW()"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: update_users_no_where_2
+  sql: "UPDATE public.users SET id = id"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: delete_orders_amount
+  sql: "DELETE FROM public.orders WHERE amount < 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: delete_users_id_over_threshold
+  sql: "DELETE FROM public.users WHERE id > 1000"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: update_orders_no_where_3
+  sql: "UPDATE public.orders SET is_reviewed = 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+- id: delete_analytics_page_views
+  sql: "DELETE FROM analytics.page_views WHERE session_id = 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: policy_rule
+  self_correctable: false
+
+- id: update_orders_mass_flag
+  sql: "UPDATE public.orders SET flag = 0"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  self_correctable: true
+
+# ---------------------------------------------------------------------------
+# injection (30 entries) — SQL injection patterns that are denied
+# Injections to non-whitelisted tables via UNION, subquery -> schema_whitelist
+# Multi-statement injections -> multi_statement
+# Pure tautology/comment injections on whitelisted tables are ALLOWED by the
+# engine, so those cannot appear in this category.
+# ---------------------------------------------------------------------------
+
+- id: inj_union_shadow
+  sql: "SELECT id FROM public.users WHERE id = 1 UNION ALL SELECT pass FROM shadow.users"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_admin
+  sql: "SELECT id, name FROM public.users UNION SELECT username, password FROM admin.users"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+# F10b: a QUOTED table identifier is case-sensitive in Postgres, so "public"."USERS"
+# is a distinct table from the whitelisted public.users and must not be folded onto it.
+- id: schema_whitelist_quoted_case_variant_table
+  sql: 'SELECT id FROM "public"."USERS" WHERE id = 1'
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_info_schema
+  sql: "SELECT id FROM public.users WHERE id = 1 UNION SELECT table_name FROM information_schema.tables"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_pg_class
+  sql: "SELECT id FROM public.orders UNION SELECT relname FROM pg_catalog.pg_class"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_pg_shadow
+  sql: "SELECT id FROM public.users WHERE id = 1 UNION SELECT usename FROM pg_catalog.pg_shadow"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_admin
+  sql: "SELECT id FROM public.users WHERE id IN (SELECT id FROM admin.users)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_secrets
+  sql: "SELECT id FROM public.users WHERE id = (SELECT password FROM admin.credentials LIMIT 1)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_env
+  sql: "SELECT id FROM public.orders WHERE user_id IN (SELECT id FROM sys.environment WHERE key = 'DB_PASS')"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_multistatement_drop
+  sql: "SELECT id FROM public.users WHERE id = 1; DROP TABLE public.users"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: inj_multistatement_insert
+  sql: "SELECT id FROM public.users WHERE id = 1; INSERT INTO admin.logs VALUES (1, 'pwned')"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: inj_multistatement_update
+  sql: "SELECT id FROM public.users; UPDATE public.users SET id = 0"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: inj_subquery_internal_sessions
+  sql: "SELECT id FROM public.users WHERE id = (SELECT user_id FROM internal.sessions LIMIT 1)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_mysql
+  sql: "SELECT id FROM public.users UNION SELECT user FROM mysql.user"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_pg_user
+  sql: "SELECT id FROM public.orders UNION SELECT usesysid FROM pg_catalog.pg_user"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_sys_tables
+  sql: "SELECT id FROM public.users WHERE id = (SELECT COUNT(*) FROM information_schema.columns)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_credentials
+  sql: "SELECT id FROM public.users UNION SELECT token FROM internal.api_secrets"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_config
+  sql: "SELECT id FROM public.orders UNION SELECT value FROM app.config WHERE key = 'secret_key'"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_admin_count
+  sql: "SELECT id FROM public.users WHERE id = 1 AND (SELECT COUNT(*) FROM admin.users) > 0"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_shadow_all
+  sql: "SELECT id, name, email FROM public.users UNION ALL SELECT user, pass, role FROM private.admins"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_multistatement_exec
+  sql: "SELECT id FROM public.users WHERE id = 1; SELECT pg_read_file('/etc/passwd')"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: inj_union_env_vars
+  sql: "SELECT id FROM public.users UNION SELECT setting FROM pg_catalog.pg_settings WHERE name = 'data_directory'"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_admin_pass
+  sql: "SELECT id FROM public.orders WHERE user_id NOT IN (SELECT id FROM admin.blocked_users)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_vault
+  sql: "SELECT id FROM public.users UNION SELECT secret FROM vault.credentials"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_internal_api_tokens
+  sql: "SELECT id FROM public.users WHERE id NOT IN (SELECT user_id FROM internal.api_tokens WHERE active = 1)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_logs
+  sql: "SELECT id FROM public.users UNION SELECT payload FROM audit.raw_logs WHERE level = 'ERROR'"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_priv_table
+  sql: "SELECT id FROM public.users WHERE id IN (SELECT user_id FROM priv.sessions WHERE active = 1)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_auth
+  sql: "SELECT id FROM public.orders UNION SELECT username FROM auth.tokens"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_secret_env
+  sql: "SELECT id FROM public.users WHERE id = (SELECT id FROM secrets.env WHERE key = 'API_KEY')"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_pg_authid
+  sql: "SELECT id FROM public.users UNION SELECT rolname FROM pg_catalog.pg_authid"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_multistatement_alter
+  sql: "SELECT id FROM public.users WHERE id = 1; ALTER TABLE public.users ADD COLUMN secret TEXT"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+# ---------------------------------------------------------------------------
+# hallucination (25 entries) — plausible SQL on non-whitelisted tables
+# An AI agent might generate these confidently, but all reference tables
+# outside the whitelist -> denied with reason_code: schema_whitelist
+# ---------------------------------------------------------------------------
+
+- id: hallucinate_secrets_table
+  sql: "SELECT token FROM internal.api_secrets WHERE id = 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_accounts
+  sql: "SELECT id FROM public.accounts WHERE user_id = 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_products
+  sql: "SELECT id, name FROM public.products WHERE category = 'electronics'"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_customers
+  sql: "SELECT id, email FROM public.customers WHERE active = 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_transactions
+  sql: "SELECT id, amount FROM public.transactions WHERE user_id = 5"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_audit_logs
+  sql: "SELECT * FROM audit.logs WHERE action = 'login'"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_app_config
+  sql: "SELECT value FROM app.config WHERE key = 'max_retries'"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_subscriptions
+  sql: "SELECT id, plan FROM public.subscriptions WHERE status = 'active'"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_invoices
+  sql: "SELECT id, total FROM billing.invoices WHERE user_id = 3"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_notifications
+  sql: "SELECT id FROM public.notifications WHERE user_id = 7 AND read = false"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_roles
+  sql: "SELECT id, name FROM public.roles WHERE level > 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_permissions
+  sql: "SELECT id, action FROM public.permissions WHERE role_id = 2"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_payments
+  sql: "SELECT id, status FROM payments.transactions WHERE completed = true"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_inventory
+  sql: "SELECT sku, quantity FROM warehouse.inventory WHERE location = 'shelf_A'"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_settings
+  sql: "SELECT key, value FROM user_settings WHERE user_id = 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_feedback
+  sql: "SELECT id, rating FROM public.feedback WHERE product_id = 10"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_categories
+  sql: "SELECT id, name FROM public.categories WHERE parent_id IS NULL"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_tags
+  sql: "SELECT id, label FROM public.tags WHERE active = 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_sessions
+  sql: "SELECT session_id, user_id FROM public.sessions WHERE expires_at > NOW()"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_messages
+  sql: "SELECT id, body FROM public.messages WHERE recipient_id = 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_reports_table
+  sql: "SELECT id, title FROM reporting.reports WHERE owner_id = 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_tokens
+  sql: "SELECT token FROM auth.api_tokens WHERE user_id = 5 AND active = true"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_uploads
+  sql: "SELECT id, filename FROM storage.uploads WHERE user_id = 2"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_coupons
+  sql: "SELECT code, discount FROM public.coupons WHERE expires_at > NOW()"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_addresses
+  sql: "SELECT id, city, country FROM public.addresses WHERE user_id = 9"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+# ---------------------------------------------------------------------------
+# column_violation (25 entries) — queries that reference disallowed/wildcard
+# columns on public.users (column-restricted to [id, name, email]).
+# Wildcard (SELECT *) entries are self_correctable: true because Terminus
+# returns a suggested_sql that restricts to allowed columns. Entries that
+# name a specific forbidden column are self_correctable: false: there is no
+# way to auto-correct which allowed column to substitute for a forbidden one.
+# ---------------------------------------------------------------------------
+
+- id: col_wildcard_users
+  sql: "SELECT * FROM public.users"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: true
+
+- id: col_insert_disallowed_column
+  sql: "INSERT INTO public.users (id, name, ssn) VALUES (1, 'a', '000-00-0000')"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_insert_no_column_list
+  sql: "INSERT INTO public.users VALUES (1, 'a', 'a@x.com')"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_insert_select_writes_restricted
+  sql: "INSERT INTO public.users (id, ssn) SELECT o.id, o.total FROM public.orders o"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_password
+  sql: "SELECT password_hash FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_created_at
+  sql: "SELECT created_at FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_role
+  sql: "SELECT role FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_phone
+  sql: "SELECT phone FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+# F10: a QUOTED identifier is case-sensitive in Postgres, so "EMAIL" is a distinct
+# column from the allowlisted `email` and must not be folded onto it (quote-aware
+# matching). The quoted case-variant is denied like any disallowed column.
+- id: col_disallowed_quoted_case_variant
+  sql: 'SELECT "EMAIL" FROM public.users WHERE id = 1'
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_address
+  sql: "SELECT address FROM public.users WHERE id = 5"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_wildcard_users_where
+  sql: "SELECT * FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: true
+
+- id: col_disallowed_status
+  sql: "SELECT status FROM public.users WHERE id = 2"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_dob
+  sql: "SELECT date_of_birth FROM public.users WHERE id = 3"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_ssn
+  sql: "SELECT ssn FROM public.users WHERE id = 4"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_token
+  sql: "SELECT reset_token FROM public.users WHERE id = 5"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_updated_at
+  sql: "SELECT updated_at FROM public.users WHERE id = 6"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_wildcard_users_limit
+  sql: "SELECT * FROM public.users LIMIT 10"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: true
+
+- id: col_disallowed_salt
+  sql: "SELECT password_salt FROM public.users WHERE id = 7"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_bio
+  sql: "SELECT bio FROM public.users WHERE id = 8"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_wildcard_users_order
+  sql: "SELECT * FROM public.users ORDER BY id"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: true
+
+- id: col_disallowed_stripe_id
+  sql: "SELECT stripe_customer_id FROM public.users WHERE id = 9"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_2fa_secret
+  sql: "SELECT totp_secret FROM public.users WHERE id = 10"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_failed_logins
+  sql: "SELECT failed_login_count FROM public.users WHERE id = 11"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_wildcard_users_in
+  sql: "SELECT * FROM public.users WHERE id IN (1, 2, 3)"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: true
+
+- id: col_disallowed_last_login
+  sql: "SELECT last_login_at FROM public.users WHERE id = 12"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_plan
+  sql: "SELECT subscription_plan FROM public.users WHERE id = 13"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_wildcard_users_like
+  sql: "SELECT * FROM public.users WHERE name LIKE 'A%'"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: true
+
+- id: col_disallowed_ip
+  sql: "SELECT last_ip_address FROM public.users WHERE id = 14"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+- id: col_disallowed_hash
+  sql: "SELECT auth_token_hash FROM public.users WHERE id = 15"
+  dialect: postgres
+  category: column_violation
+  expected_decision: deny
+  expected_reason_code: column_whitelist
+  self_correctable: false
+
+# ---------------------------------------------------------------------------
+# multi_statement (10 entries) — multiple SQL statements in one request
+# ---------------------------------------------------------------------------
+
+- id: multi_select_drop
+  sql: "SELECT id FROM public.users; DROP TABLE public.users"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_two_selects
+  sql: "SELECT id FROM public.users; SELECT id FROM public.orders"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_select_update
+  sql: "SELECT id FROM public.users; UPDATE public.orders SET status = 0"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_select_delete
+  sql: "SELECT id FROM public.orders; DELETE FROM public.users"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_select_truncate
+  sql: "SELECT id FROM public.users; TRUNCATE public.orders"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_select_insert
+  sql: "SELECT id FROM public.users; INSERT INTO public.orders VALUES (1, 2)"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_update_update
+  sql: "UPDATE public.orders SET status = 1 WHERE id = 1; UPDATE public.orders SET status = 2 WHERE id = 2"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_three_stmts
+  sql: "SELECT 1; SELECT 2; SELECT 3"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_select_alter
+  sql: "SELECT id FROM public.users; ALTER TABLE public.users ADD COLUMN secret TEXT"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+- id: multi_select_create
+  sql: "SELECT id FROM public.users; CREATE TABLE backup AS SELECT id FROM public.users"
+  dialect: postgres
+  category: multi_statement
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+# ---------------------------------------------------------------------------
+# invalid_sql (10 entries) — syntactically broken SQL
+# Parser rejects these -> reason_code: invalid_sql
+# ---------------------------------------------------------------------------
+
+- id: invalid_garbage
+  sql: "SELEKT id FRM public.users Wbr"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_typo_from
+  sql: "SELECT id FORM public.users WHERE id = 1"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_missing_table
+  sql: "SELECT id FROM WHERE id = 1"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_unclosed_paren
+  sql: "SELECT id FROM public.users WHERE id IN (1, 2, 3"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_random_words
+  sql: "FETCH ALL THE DATA FROM USERS TABLE PLEASE"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  self_correctable: false
+
+- id: invalid_truncated_query
+  sql: "SELECT id, name FROM"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_only_comment
+  sql: "-- SELECT id FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_natural_language
+  sql: "show me all the users in the system"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  self_correctable: false
+
+- id: invalid_misspelled_op
+  sql: "INSRT INTO public.orders (id) VALUES (1)"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_json_not_sql
+  sql: "{\"query\": \"SELECT id FROM public.users\", \"limit\": 10}"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  self_correctable: false
+
+# ---------------------------------------------------------------------------
+# Additional entries to meet the 230-entry total minimum
+# ---------------------------------------------------------------------------
+
+# benign_read (5 more -> 45 total)
+- id: read_analytics_revenue
+  sql: "SELECT * FROM analytics.revenue WHERE date > '2026-01-01'"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_daily_stats
+  sql: "SELECT * FROM analytics.daily_stats LIMIT 30"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_users_id_name_email
+  sql: "SELECT id, name, email FROM public.users WHERE id IN (10, 20, 30)"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_orders_having
+  sql: "SELECT user_id FROM public.orders GROUP BY user_id HAVING COUNT(*) > 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+- id: read_analytics_ab_tests
+  sql: "SELECT * FROM analytics.ab_tests WHERE experiment_id = 3"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+
+# benign_write (5 more -> 20 total)
+- id: update_orders_priority
+  sql: "UPDATE public.orders SET priority = 1 WHERE id = 1"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_retry_count
+  sql: "UPDATE public.orders SET retry_count = 0 WHERE id = 2"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_locked
+  sql: "UPDATE public.orders SET locked = 0 WHERE id = 3"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_users_id_in
+  sql: "UPDATE public.users SET id = id WHERE id IN (1, 2, 3)"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+- id: update_orders_score
+  sql: "UPDATE public.orders SET score = 5 WHERE id = 4"
+  dialect: postgres
+  category: benign_write
+  expected_decision: allow
+
+# injection (5 more -> 35 total)
+- id: inj_union_info_columns
+  sql: "SELECT id FROM public.users UNION SELECT column_name FROM information_schema.columns"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_system_catalog
+  sql: "SELECT id FROM public.orders UNION SELECT datname FROM pg_catalog.pg_database"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_subquery_sys_users
+  sql: "SELECT id FROM public.users WHERE id IN (SELECT uid FROM system.users WHERE admin = 1)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_union_private_keys
+  sql: "SELECT id FROM public.users UNION SELECT key_value FROM private.api_keys"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: inj_multistatement_grant
+  sql: "SELECT id FROM public.users; GRANT ALL ON public.users TO attacker"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: multi_statement
+  self_correctable: false
+
+# hallucination (5 more -> 30 total)
+- id: hallucinate_user_profiles
+  sql: "SELECT id, bio FROM public.user_profiles WHERE user_id = 1"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_audit_trail
+  sql: "SELECT id, event FROM public.audit_trail WHERE action = 'login' LIMIT 10"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_feature_flags
+  sql: "SELECT flag_name, enabled FROM feature_flags WHERE user_id = 5"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_search_history
+  sql: "SELECT query, created_at FROM public.search_history WHERE user_id = 2"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+- id: hallucinate_password_resets
+  sql: "SELECT token, expires_at FROM public.password_resets WHERE user_id = 3"
+  dialect: postgres
+  category: hallucination
+  expected_decision: deny
+  expected_reason_code: schema_whitelist
+  self_correctable: false
+
+# invalid_sql (5 more -> 15 total)
+- id: invalid_typo_drop
+  sql: "DRPO TABBLE public.users"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_at_symbol
+  sql: "@@SELECT id FROM public.users WHERE id = 1"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_empty_statement
+  sql: ";"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_where_only
+  sql: "WHERE id = 1"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+- id: invalid_mixed_language
+  sql: "SELECT todos los usuarios FROM public.users"
+  dialect: postgres
+  category: invalid_sql
+  expected_decision: deny
+  expected_reason_code: invalid_sql
+  self_correctable: false
+
+# --- F3: injection-function enforcement on the allow path (and its FP guard) ---
+# Benign: AST-based detection must NOT flag type names / ordinary functions.
+- id: benign_cast_varchar
+  sql: "SELECT CAST(id AS varchar(255)) FROM public.orders WHERE id = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+- id: benign_cast_nchar
+  sql: "SELECT CAST(id AS nchar(10)) FROM public.orders WHERE id = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+- id: benign_char_length
+  sql: "SELECT char_length(name) FROM public.orders WHERE id = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+- id: benign_to_char
+  sql: "SELECT to_char(created_at, 'YYYY-MM') FROM public.orders WHERE id = 1"
+  dialect: postgres
+  category: benign_read
+  expected_decision: allow
+# Dangerous: injection/time-based functions on approved tables (the F3 hole).
+- id: inj_pg_sleep_approved_table
+  sql: "SELECT id FROM public.users WHERE id = 1 AND pg_sleep(10) IS NULL"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: injection_function
+  self_correctable: false
+- id: inj_benchmark_approved_table
+  sql: "SELECT id FROM public.orders WHERE amount > benchmark(1000000, md5('x'))"
+  dialect: mysql
+  category: injection
+  expected_decision: deny
+  expected_reason_code: injection_function
+  self_correctable: false
+- id: inj_sleep_approved_table
+  sql: "SELECT id FROM public.orders WHERE user_id = 5 AND sleep(5)"
+  dialect: mysql
+  category: injection
+  expected_decision: deny
+  expected_reason_code: injection_function
+  self_correctable: false
+- id: inj_pg_read_file_in_subquery
+  sql: "SELECT id FROM public.users WHERE id = (SELECT id FROM public.users WHERE pg_read_file('/etc/passwd') IS NULL)"
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: injection_function
+  self_correctable: false
+- id: inj_quoted_pg_sleep
+  sql: 'SELECT id FROM public.orders WHERE id = 1 AND "pg_sleep"(10) IS NULL'
+  dialect: postgres
+  category: injection
+  expected_decision: deny
+  expected_reason_code: injection_function
+  self_correctable: false
+
+# ---------------------------------------------------------------------------
+# F11: a data-modifying op hidden in a CTE bypasses operation-based rules
+# (classified by the top-level op only) -> deny nested_write. Not self-
+# correctable: a smuggled write has no benign rewrite.
+# ---------------------------------------------------------------------------
+- id: dml_cte_delete_under_select
+  sql: "WITH d AS (DELETE FROM public.users WHERE id = 1 RETURNING id) SELECT 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: nested_write
+  self_correctable: false
+- id: dml_cte_insert_unrestricted_under_select
+  sql: "WITH i AS (INSERT INTO public.orders (id) VALUES (1) RETURNING id) SELECT 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: nested_write
+  self_correctable: false
+- id: dml_cte_update_under_select
+  sql: "WITH u AS (UPDATE public.users SET name = 'x' WHERE id = 1 RETURNING id) SELECT 1"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: nested_write
+  self_correctable: false
+- id: dml_cte_write_smuggled_in_top_level_insert
+  sql: "WITH d AS (DELETE FROM public.orders WHERE id = 1 RETURNING id) INSERT INTO public.orders (id) VALUES (1)"
+  dialect: postgres
+  category: dangerous_dml
+  expected_decision: deny
+  expected_reason_code: nested_write
+  self_correctable: false
