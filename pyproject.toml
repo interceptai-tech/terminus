@@ -37,6 +37,7 @@ dependencies = [
     "pyjwt>=2.8",
     "pyyaml>=6.0",
     "cryptography>=42",
+    "pynacl>=1.5",
     "mcp>=1.2",
     "asyncpg>=0.30",
     # fastapi-limiter is imported unconditionally at runtime (main.py,
@@ -102,6 +103,18 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+# The public open-core snapshot ships WITHOUT the src/terminus/plane package
+# (the control-plane deployment client is held back). mcp/server.py, main.py, and
+# mcp/__main__.py reference terminus.plane.* via TYPE_CHECKING and lazy, runtime
+# guarded imports; with the package absent those would fail `mypy --strict` as
+# missing-import errors. This override makes those imports resolve to Any when the
+# package is missing. It is INERT in this private repo, where the package exists
+# and its own modules are still type-checked normally — it only changes behavior
+# in the snapshot where the module is genuinely absent.
+[[tool.mypy.overrides]]
+module = "terminus.plane.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

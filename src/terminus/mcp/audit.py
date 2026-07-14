@@ -26,13 +26,17 @@ def record_tool_decision(
     enforcement_mode: str = "enforce",
     would_deny: bool = False,
     would_deny_reason_code: str | None = None,
+    operator_id: str | None = None,
+    approval_source: str | None = None,
 ) -> None:
     """Write one MCP tool call into the audit chain.
 
     enforcement_mode/would_deny/would_deny_reason_code are the same graduated-
     autonomy v3 evidence the HTTP router logs (see terminus.policy.graduated):
     defaults match the pre-Task-6 (enforce-only) behavior so any caller that does
-    not pass them is unaffected.
+    not pass them is unaffected. operator_id/approval_source are the schema v4
+    operator-identity evidence (see ApprovalProvenance in terminus.mcp.approvals):
+    who resolved a hold and via which channel, None outside the approval path.
     """
     audit_logger.log_decision(
         request_id=request_id,
@@ -47,4 +51,6 @@ def record_tool_decision(
         enforcement_mode=enforcement_mode,
         would_deny=would_deny,
         would_deny_reason_code=would_deny_reason_code,
+        operator_id=operator_id,
+        approval_source=approval_source,
     )

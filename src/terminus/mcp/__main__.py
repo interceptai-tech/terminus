@@ -7,8 +7,15 @@ from __future__ import annotations
 
 import sys
 
+import structlog
+
 from terminus.audit.audit_logger import configure_logging
-from terminus.config.settings import assert_known_dialect, assert_production_secrets, get_settings
+from terminus.config.settings import (
+    assert_known_dialect,
+    assert_plane_config,
+    assert_production_secrets,
+    get_settings,
+)
 from terminus.mcp.server import build_server
 
 
@@ -26,6 +33,19 @@ def main() -> None:
         )
     assert_production_secrets(settings)
     assert_known_dialect(settings)
+    assert_plane_config(settings)
+    if settings.plane_enabled:
+        from terminus.plane.enrollment import load_plane_context
+
+        log = structlog.get_logger("terminus.mcp")
+        ctx = load_plane_context(settings)
+        log.info(
+            "plane_context_loaded",
+            deployment_id=ctx.identity.deployment_id,
+            deployment_fp=ctx.identity.fingerprint(),
+            trust_root_fp=ctx.trust_root_fingerprint,
+            operators=ctx.operator_count,
+        )
     build_server().run()
 
 

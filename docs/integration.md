@@ -226,6 +226,7 @@ for the full model, including the deployment topology (network segmentation)
 that makes it unbypassable, the approval flow, and the audit binding. All
 settings are documented in [docs/configuration.md](configuration.md).
 
+
 ### See it live
 
 `dogfood/README.md` is a reference MCP-client integration: a real LangGraph
@@ -279,6 +280,7 @@ stdio, performs the MCP initialize handshake and a `tools/list`, and asserts
 exactly `query` and `execute` are exposed. CI wiring for it is intentionally
 not included, since it needs a live Postgres; that coverage boundary is
 explicit rather than silently missing.
+
 
 ## Gotchas
 

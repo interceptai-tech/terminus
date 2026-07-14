@@ -162,3 +162,6 @@ dogfood/out/
 # Security-efficacy benchmark generated artifacts
 bench/corpora/
 bench/out/
+
+# Cloudflare Wrangler local cache
+.wrangler/

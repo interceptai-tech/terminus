@@ -42,12 +42,14 @@ text leaks.
   "sql_sha256": "e3b0c442...",
   "security_flags": { "has_smuggling_pattern": false, "...": false },
   "metadata_keys": ["tenant", "trace"],
-  "schema_version": 3,
+  "schema_version": 4,
   "mcp_tool": null,
   "mcp_approval_status": null,
   "enforcement_mode": "enforce",
   "would_deny": false,
   "would_deny_reason_code": null,
+  "operator_id": null,
+  "approval_source": null,
   "previous_signature": "0000...",
   "event_signature": "9f3a..."
 }
@@ -74,13 +76,13 @@ Notes on the privacy-preserving fields:
 - `metadata_keys` records only the **key names** of the request metadata, never
   the values.
 
-### Schema versions (v2 and v3)
+### Schema versions (v2 through v4)
 
-- `schema_version` (int): the signed payload schema version, `3` as of this
+- `schema_version` (int): the signed payload schema version, `4` as of this
   change. Lines written without it are v1 (pre-2026-07-07); the verifier
   checks them against a frozen v1 field set rather than treating a missing
-  field as an error, so pre-v2 history keeps verifying. Lines with `2` are
-  checked against a frozen v2 field set the same way.
+  field as an error, so pre-v2 history keeps verifying. Lines with `2` or `3`
+  are checked against frozen v2/v3 field sets the same way.
 - `mcp_tool` (string or null, v2): which MCP tool ran, `"query"` or `"execute"`.
   `null` on HTTP `/intercept` events, which have no MCP tool.
 - `mcp_approval_status` (string or null, v2): the break-glass outcome for the
@@ -94,15 +96,22 @@ Notes on the privacy-preserving fields:
   that a softer mode let through. Default `false`.
 - `would_deny_reason_code` (string or null, v3): the stable reason code the
   would-be denial carried. Default `null` when `would_deny` is false.
+- `operator_id` (string or null, v4): who resolved a held approval, never a
+  client-asserted value. `null` for events outside the approval path (an
+  immediate allow/deny) and on an approval timeout (nobody resolved it, so
+  there is no operator to attribute).
+- `approval_source` (string or null, v4): the channel the resolution came
+  through, e.g. `"local"` for an in-process break-glass resolution. Same
+  `null` cases as `operator_id`.
 
 The verifier picks the signed field set per line from its `schema_version`: a
 line with no `schema_version` is checked against the v1 set, a line with
-`schema_version: 2` against the frozen v2 set, a line with `schema_version: 3`
-against the full v3 set including all six fields above, and any other value
-fails closed with `unknown_schema_version` rather than being skipped or guessed
-at. Stripping or editing any versioned field on a line, the same as any other
-signed field, changes the payload the HMAC was computed over and surfaces as
-`signature_mismatch`.
+`schema_version: 2` or `schema_version: 3` against the frozen v2/v3 sets, a
+line with `schema_version: 4` against the full live set including every
+versioned field above, and any other value fails closed with `unknown_schema_version`
+rather than being skipped or guessed at. Stripping or editing any versioned
+field on a line, the same as any other signed field, changes the payload the
+HMAC was computed over and surfaces as `signature_mismatch`.
 
 ## The trust-change event (a second, chained event kind)
 
@@ -152,26 +161,9 @@ baseline and never emits a trust-change event, only a runtime reload diff does.
 `AUDIT_SCHEMA_VERSION`.** `schema_version: 1` on a `terminus_trust_level_change`
 line means "the trust-change event's v1 field set" (`TRUST_CHANGE_SIGNED_FIELDS`
 above), a completely separate number line from the `schema_version: 3` on a
-`terminus_intercept_decision` line. The two event kinds evolve their field sets
-independently; only the event's own `event` name says which schema-version
-table applies. Domain separation between the two kinds rests on their signed
-field-name sets being disjoint by construction (no shared field name means a
-signed decision payload and a signed trust-change payload can never collide or
-be replayed as each other), so any future schema author adding a field to one
-event kind must not reuse a field name from the other's signed set.
-
-**Verifier consequence: field-set selection is per event NAME, then per
-`schema_version`.** `verify_audit_chain` dispatches on the JSON line's `event`
-key first (`terminus_intercept_decision` vs `terminus_trust_level_change`,
-anything else is skipped as before, e.g. `terminus_audit_checkpoint`), then
-selects that event kind's signed field set for the line's `schema_version`. A
-decision line and a trust-change line can interleave freely: both carry
-`sequence`/`event_signature`/`previous_signature` against the SAME running
-`prev_signature`, so a mixed decision/trust-change chain verifies as one
-sequence, and deleting or reordering either kind trips the same
-`broken_link`/`sequence_gap` checks described above. An unrecognized
-`schema_version` on a trust-change line fails closed with
-`unknown_schema_version`, exactly like an unrecognized decision-line version.
+`terminus_intercept_decision` line. Each event kind evolves its signed field
+set independently; only the event's own `event` name says which
+schema-version table applies.
 
 ## How the chain works
 

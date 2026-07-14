@@ -173,11 +173,56 @@ class TerminusSettings(BaseSettings):
     # Seconds a pending high-risk write waits for approval before it expires as a
     # deny (fail-closed; never executes on timeout).
     mcp_approval_timeout_seconds: int = Field(default=300, gt=0)
+    # An allowed WRITE at or above this risk score is reveal-MANDATORY: the courier
+    # refuses a plane approve that does not return the sealed reveal receipt
+    # (docs/superpowers/specs/2026-07-13-control-plane-slice1-reveal-roundtrip-design.md).
+    # Must be >= mcp_approval_risk_threshold to mean anything; equal makes every
+    # held write reveal-mandatory.
+    mcp_approval_reveal_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
+    # Per-deployment bound on concurrently pending holds. Each hold pins a
+    # coroutine/MCP request; past the bound new high-risk writes are denied
+    # immediately (reason_code="max_holds_exceeded", no remediation object;
+    # fail-closed availability, never a bypass).
+    mcp_approval_max_holds: int = Field(default=32, ge=1)
 
     # Graduated autonomy (per-agent observe -> enforce promotion). Off by default:
     # when false, registry trust_level is ignored everywhere and behavior is
     # byte-for-byte the always-enforce pipeline.
     graduated_autonomy_enabled: bool = False
+
+    # --- Control plane (part B: enrollment). All inert unless plane_enabled.
+    # OFF by default: when false, none of this is loaded and behavior is
+    # byte-for-byte the non-plane pipeline.
+    plane_enabled: bool = False
+    # Stable identifier the decision verifier matches (payload.deployment_id).
+    plane_deployment_id: str = ""
+    plane_tenant_id: str = ""
+    # Primary storage for the deployment private key: a 0600 file (a mounted
+    # secret volume in containers). base64 of the 32-byte Ed25519 raw seed.
+    plane_deployment_key_path: str = "/var/lib/terminus/deployment_key"
+    # Env override (base64 raw seed). When set, wins over the file (BYO key).
+    plane_deployment_key: str = ""
+    # Pinned trust-root PUBLIC key (PEM, path, or base64 raw); out-of-band anchor.
+    plane_trust_root: str = ""
+    # Path to a YAML map {operators: {id: public_key}} provisioned by GitOps.
+    plane_operator_keys_path: str = ""
+
+    # --- Control plane (part E: deployment plane-client). Inert unless plane_enabled.
+    # Base URL of the plane relay (e.g. https://plane.example.com). Required when enabled.
+    plane_base_url: str = ""
+    # Relay long-poll wait, clamped by the plane to 1..30s.
+    plane_poll_wait_seconds: int = 25
+    # Relay batch size (LIMIT k), clamped by the plane to <=50.
+    plane_poll_batch: int = 10
+    # Disk journal path for the replay-guard nonce stores. Empty (default) means
+    # in-memory only -- a captured operator-decision blob is replayable after a
+    # process restart until this is set. When non-empty, backs BOTH the decision
+    # nonce store (this path) and the reveal nonce store (this path + ".reveals").
+    plane_nonce_path: str = ""
+    # How long a burned nonce stays in the journal before it's eligible for
+    # reuse (and compaction drops it). Must outlive the longest possible
+    # decision `exp` window with margin.
+    plane_nonce_ttl_seconds: int = Field(default=86400, gt=0)
 
     # P1 hardening (GAPS M1/M5/H1). The three `| None` fields are environment-keyed:
     # None means "auto", filled by _apply_environment_defaults keyed on `environment`
@@ -308,3 +353,39 @@ def assert_known_dialect(settings: TerminusSettings) -> None:
         raise ValueError(
             f"TERMINUS_SQL_DIALECT={settings.sql_dialect!r} is not a known SQL dialect"
         ) from exc
+
+
+def assert_plane_config(settings: TerminusSettings) -> None:
+    """Fail fast when the control plane is enabled but misconfigured.
+
+    Shallow check: the required identifiers/paths are present and a deployment
+    key source exists. The deep validation (keys parse, >=1 operator, file
+    perms) happens in load_plane_context, called from the lifespan right after
+    this. No-op when the plane is disabled, so non-plane users are unaffected.
+    """
+    if not settings.plane_enabled:
+        return
+
+    missing: list[str] = []
+    if not settings.plane_deployment_id:
+        missing.append("TERMINUS_PLANE_DEPLOYMENT_ID")
+    if not settings.plane_tenant_id:
+        missing.append("TERMINUS_PLANE_TENANT_ID")
+    if not settings.plane_trust_root:
+        missing.append("TERMINUS_PLANE_TRUST_ROOT")
+    if not settings.plane_operator_keys_path:
+        missing.append("TERMINUS_PLANE_OPERATOR_KEYS_PATH")
+    if not settings.plane_base_url:
+        missing.append("TERMINUS_PLANE_BASE_URL")
+    if missing:
+        raise RuntimeError(
+            "TERMINUS_PLANE_ENABLED=true but required settings are unset: " + ", ".join(missing)
+        )
+
+    if not settings.plane_deployment_key and not Path(settings.plane_deployment_key_path).exists():
+        raise RuntimeError(
+            "TERMINUS_PLANE_ENABLED=true but no deployment key found: set "
+            "TERMINUS_PLANE_DEPLOYMENT_KEY, or create "
+            f"{settings.plane_deployment_key_path} by running "
+            "`python -m terminus.plane.enroll` first."
+        )

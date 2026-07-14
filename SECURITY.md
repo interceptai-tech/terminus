@@ -150,7 +150,10 @@ Every log entry includes:
 
 This creates a cryptographically verifiable chain. See `AuditLogger.log_decision()` for implementation. The chain is independently verifiable from the persisted log via `terminus.audit.verify.verify_audit_chain`, which reconstructs each signed payload from the stored fields and recomputes the HMAC without trusting the log's own assertions. Known limitation: the chain is process-scoped and resets to genesis on restart; durable cross-restart chaining is a planned enhancement.
 
-**Audit events are versioned.** Each event carries a signed `schema_version` (currently `3`). v2 added two signed fields for the MCP enforcement point, `mcp_tool` and `mcp_approval_status` (`null` on the HTTP `/intercept` path), so the tool that ran and the outcome of any human approval are covered by the HMAC, not just recorded as metadata key names. v3 adds three signed graduated-autonomy evidence fields: `enforcement_mode` (default `"enforce"`), `would_deny` (default `false`), and `would_deny_reason_code` (default `null`), so a softened decision and what enforcement would have done are tamper-evident. `verify_audit_chain` selects the signed field set per line by its `schema_version`: lines with none are the original v1 set and lines with `2` use a frozen v2 set, so history captured before each change keeps verifying; any other version fails closed with `unknown_schema_version` rather than being guessed at or skipped. See [docs/capabilities/audit.md](docs/capabilities/audit.md) for the full field list.
+**Audit events are versioned.** Each event carries a signed `schema_version` (currently `4`). v2 added two signed fields for the MCP enforcement point, `mcp_tool` and `mcp_approval_status` (`null` on the HTTP `/intercept` path), so the tool that ran and the outcome of any human approval are covered by the HMAC, not just recorded as metadata key names. v3 adds three signed graduated-autonomy evidence fields: `enforcement_mode` (default `"enforce"`), `would_deny` (default `false`), and `would_deny_reason_code` (default `null`), so a softened decision and what enforcement would have done are tamper-evident. v4 adds two signed operator-attribution fields, `operator_id` and `approval_source` (both default `null`): the chain used to record only THAT a held write was approved or denied, not WHO decided it. They are populated when an approval flow resolves a held write, never client-asserted, and `null` on a timeout (nobody resolved it, so there is no operator to attribute) and on any event outside the approval path.
+
+
+`verify_audit_chain` selects the signed field set per line by its `schema_version`: lines with none are the original v1 set, lines with `2` or `3` use frozen v2/v3 sets, so history captured before each change keeps verifying; any other version fails closed with `unknown_schema_version` rather than being guessed at or skipped. See [docs/capabilities/audit.md](docs/capabilities/audit.md) for the full field list.
 
 **Tail truncation is now detectable, with a trust-boundary caveat.** Chaining
 alone cannot prove an attacker who can write the log store did not delete the
@@ -392,6 +395,9 @@ returns `NeedsApproval` and waits for a human exactly as an
 ordinarily-allowed high-risk write would. Observe relaxes a policy deny; it
 never relaxes the break-glass valve, and floor denies never reach the point
 where a grant could be minted, observe or not.
+
+---
+
 
 ---
 

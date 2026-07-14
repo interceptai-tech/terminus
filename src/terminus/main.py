@@ -17,7 +17,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from terminus.audit.audit_logger import configure_logging, emit_shutdown_checkpoint
 from terminus.auth.registry import get_registry
 from terminus.config.governance import get_governance_manager, run_config_poll_loop
-from terminus.config.settings import assert_known_dialect, assert_production_secrets, get_settings
+from terminus.config.settings import (
+    assert_known_dialect,
+    assert_plane_config,
+    assert_production_secrets,
+    get_settings,
+)
 from terminus.config.worker_guard import assert_single_worker
 from terminus.interceptor.router import router as interceptor_router
 from terminus.observability.metrics import (
@@ -145,6 +150,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     assert_production_secrets(settings)
     assert_known_dialect(settings)
     assert_single_worker(settings)
+    assert_plane_config(settings)
+    if settings.plane_enabled:
+        from terminus.plane.enrollment import load_plane_context
+
+        ctx = load_plane_context(settings)
+        log.info(
+            "plane_context_loaded",
+            deployment_id=ctx.identity.deployment_id,
+            deployment_fp=ctx.identity.fingerprint(),
+            trust_root_fp=ctx.trust_root_fingerprint,
+            operators=ctx.operator_count,
+        )
 
     redis = None
     try:

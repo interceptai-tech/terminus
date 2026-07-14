@@ -223,6 +223,7 @@ first incremented, so a fresh process may not export every series yet.
 | `terminus_rate_limiter_unavailable_total` | counter | none | Rate limiter unavailable, skipped, or erroring (Redis health). Climbs per skipped request while Redis is down. Nonzero means per-agent throttling is off (fail-open); the core breaker is unaffected. |
 | `terminus_signature_bundle_update_failed_total` | counter | none | Failed inbound signed signature-bundle updates. The matcher keeps last-known-good, so detection continues on existing signatures but new threat intel is not applied. Threat-intel path, not auth. |
 | `terminus_would_deny_total` | counter | `reason_code`, `operation` | Graduated autonomy only: an observe-trust agent's request that would have been denied under enforce, but was softened to an allow. `reason_code` is the original deny code (e.g. `policy_rule`, `schema_whitelist`); use this to see what a promotion to enforce would actually start blocking, before you flip the trust level. |
+| `terminus_holds_active` | gauge | none | High-risk writes currently held awaiting human approval. |
 
 The provisioned Grafana dashboard charts request rate by decision/reason, parser
 latency p50/p95/p99, smuggling attempts, and active agents.
@@ -283,6 +284,7 @@ denied a query:
 | `default` | no rule allowed it; the default-deny action applied |
 
 A `429` (not a reason_code) is the per-agent rate limit, not a policy decision.
+
 
 ## Failure modes and recovery
 
@@ -373,6 +375,7 @@ failures (`signature_bundle_update_failed` log event). These appear in
 structured logs but are not exposed as Prometheus counters. If alerting on
 Redis unavailability or bundle fetch failures becomes a priority, dedicated
 counters would need to be added to `src/terminus/observability/metrics.py`.
+
 
 ## Velocity detection (F9) rollout
 

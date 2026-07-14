@@ -26,10 +26,11 @@ GENESIS_SIGNATURE = "0" * 64
 # Schema version of the signed event payload. v1 (implicit: no schema_version field)
 # is the original 18-field set; v2 adds schema_version plus the MCP enforcement-point
 # context; v3 adds graduated-autonomy evidence (enforcement_mode, would_deny,
-# would_deny_reason_code). The verifier keeps a frozen copy of each historical field
-# set and selects per line, so pre-v3 logs verify forever. Bump this and extend the
+# would_deny_reason_code); v4 adds operator identity (operator_id, approval_source)
+# for approval decisions. The verifier keeps a frozen copy of each historical field
+# set and selects per line, so pre-v4 logs verify forever. Bump this and extend the
 # tuple together; verify.py must gain the new version in the same commit (no-drift rule).
-AUDIT_SCHEMA_VERSION: int = 3
+AUDIT_SCHEMA_VERSION: int = 4
 
 # The exact fields covered by the HMAC signature. _build_event produces exactly
 # these keys; terminus.audit.verify reconstructs the signed payload by SELECTING
@@ -60,6 +61,8 @@ AUDIT_SIGNED_FIELDS: tuple[str, ...] = (
     "enforcement_mode",
     "would_deny",
     "would_deny_reason_code",
+    "operator_id",
+    "approval_source",
 )
 
 TRUST_CHANGE_EVENT_NAME = "terminus_trust_level_change"
@@ -94,6 +97,34 @@ _UNSPECIFIED_PROVENANCE = "unspecified: see git history"
 
 # Schema version of the trust-change event payload (independent of AUDIT_SCHEMA_VERSION).
 TRUST_CHANGE_SCHEMA_VERSION: int = 1
+
+REVEAL_EVENT_NAME = "terminus_reveal_event"
+# Signed fields of the reveal event (its own frozen v1 contract, same pattern as
+# the trust-change event). A THIRD event kind on the same chain: the plane
+# courier's reveal path (src/terminus/plane/courier.py :: _dispatch_reveal) emits
+# one of these whenever it serves or rejects an operator's request to see a held
+# statement's plaintext, so the chain proves not just that a hold was approved but
+# that the reveal leg leading up to it is also tamper-evident. `event_type`
+# distinguishes "reveal_served" from "reveal_rejected" within this one signed
+# field set (mirrors TRUST_CHANGE's single-name, field-distinguished design
+# rather than minting a second event name per outcome).
+REVEAL_SIGNED_FIELDS: tuple[str, ...] = (
+    "event_time",
+    "event_type",
+    "request_id",
+    "reveal_id",
+    "operator_id",
+    "reason_code",
+    "sql_sha256",
+    "bundle_sha256",
+    "sequence",
+    "schema_version",
+)
+
+# Schema version of the reveal event payload (independent of AUDIT_SCHEMA_VERSION
+# and TRUST_CHANGE_SCHEMA_VERSION; its own versioning axis, same rationale as the
+# trust-change event's comment above).
+REVEAL_EVENT_SCHEMA_VERSION: int = 1
 
 _last_signature: str = GENESIS_SIGNATURE  # chain head for this process
 # Per-segment monotonic event counter. Resets to 0 alongside _last_signature on
@@ -278,6 +309,8 @@ class AuditLogger:
         enforcement_mode: str = "enforce",
         would_deny: bool = False,
         would_deny_reason_code: str | None = None,
+        operator_id: str | None = None,
+        approval_source: str | None = None,
     ) -> dict[str, Any]:
         """Construct the audit event dict before signature fields are added.
 
@@ -287,6 +320,12 @@ class AuditLogger:
         ``/intercept`` path). ``enforcement_mode``, ``would_deny``, and
         ``would_deny_reason_code`` are schema v3 graduated-autonomy evidence fields:
         always present with "enforce"/False/None defaults when softening was not in play.
+        ``operator_id`` and ``approval_source`` are schema v4 fields: who resolved a
+        held approval (verified via the operator's Ed25519 signature, never
+        self-asserted) and whether the resolution came through the plane's remote
+        approval loop or an in-process/local resolution. Both are None when the
+        event involved no approval decision (an immediate allow/deny, or a hold
+        resolved before this field existed).
         """
         return {
             "event_time": datetime.now(UTC).isoformat(),
@@ -321,6 +360,10 @@ class AuditLogger:
             "enforcement_mode": enforcement_mode,
             "would_deny": would_deny,
             "would_deny_reason_code": would_deny_reason_code,
+            # v4 fields. Always present; signed so the audit chain proves not just
+            # THAT a hold was approved/denied but WHO did it and via which channel.
+            "operator_id": operator_id,
+            "approval_source": approval_source,
         }
 
     def log_decision(
@@ -340,6 +383,8 @@ class AuditLogger:
         enforcement_mode: str = "enforce",
         would_deny: bool = False,
         would_deny_reason_code: str | None = None,
+        operator_id: str | None = None,
+        approval_source: str | None = None,
     ) -> None:
         """Log a tamper-proof audit event with cryptographic chaining."""
 
@@ -363,6 +408,8 @@ class AuditLogger:
                 enforcement_mode=enforcement_mode,
                 would_deny=would_deny,
                 would_deny_reason_code=would_deny_reason_code,
+                operator_id=operator_id,
+                approval_source=approval_source,
             )
             signature = _sign_event(event, _last_signature, self._key)
             event["event_signature"] = signature
@@ -431,6 +478,95 @@ class AuditLogger:
 
         with bound_contextvars(agent_id=agent_id):
             self._logger.info(TRUST_CHANGE_EVENT_NAME, **event)
+
+        if checkpoint_due:
+            self._emit_checkpoint(sequence=head_sequence, head_signature=head_signature)
+
+    @staticmethod
+    def _build_reveal_event(
+        *,
+        request_id: str,
+        reveal_id: str,
+        operator_id: str,
+        event_type: str,
+        reason_code: str | None,
+        sql_sha256: str,
+        bundle_sha256: str,
+        sequence: int = 0,
+    ) -> dict[str, Any]:
+        """Construct the reveal-event dict before signature fields are added.
+
+        ``event_type`` is ``"reveal_served"`` or ``"reveal_rejected"``. ``sql_sha256``
+        here is the plane-visible bundle's plain statement hash (see
+        ``terminus.plane.reveal``), NOT the keyed ``sql_digest`` used by decision
+        events -- the reveal bundle's digest is already known to the plane by
+        construction (it is how the plane matches a reveal request to its hold), so
+        there is nothing left to protect by keying it, and keying it would only
+        break correlation with the plane's own record. Never logs the statement
+        itself, only this digest.
+        """
+        return {
+            "event_time": datetime.now(UTC).isoformat(),
+            "event_type": event_type,
+            "request_id": request_id,
+            "reveal_id": reveal_id,
+            "operator_id": operator_id,
+            "reason_code": reason_code,
+            "sql_sha256": sql_sha256,
+            "bundle_sha256": bundle_sha256,
+            "sequence": sequence,
+            "schema_version": REVEAL_EVENT_SCHEMA_VERSION,
+        }
+
+    def log_reveal(
+        self,
+        *,
+        request_id: str,
+        reveal_id: str,
+        operator_id: str,
+        event_type: str,
+        reason_code: str | None,
+        sql_sha256: str,
+        bundle_sha256: str,
+    ) -> None:
+        """Log a tamper-proof, prev-chained record that an operator was served (or
+        refused) a held statement's plaintext via the plane reveal round-trip.
+
+        Shares the same chain state (_audit_lock/_last_signature/_sequence) as
+        log_decision and log_trust_change: a reveal outcome is just another link,
+        so deleting or reordering it relative to surrounding events breaks the same
+        HMAC chain and trips the same sequence-gap detection. Mirrors
+        log_trust_change's lock/sign/emit structure deliberately; do not refactor
+        log_decision to share code with this method, it would risk drifting the
+        load-bearing decision path.
+        """
+
+        global _last_signature, _sequence
+        with _audit_lock:
+            sequence = _sequence
+            event = self._build_reveal_event(
+                request_id=request_id,
+                reveal_id=reveal_id,
+                operator_id=operator_id,
+                event_type=event_type,
+                reason_code=reason_code,
+                sql_sha256=sql_sha256,
+                bundle_sha256=bundle_sha256,
+                sequence=sequence,
+            )
+            signature = _sign_event(event, _last_signature, self._key)
+            event["event_signature"] = signature
+            event["previous_signature"] = _last_signature
+            _last_signature = signature
+            _sequence = sequence + 1
+            # Decide checkpoint emission inside the lock so the captured head is
+            # consistent with the event just written; emit the log line outside it.
+            interval = self._settings.audit_checkpoint_interval or 0
+            checkpoint_due = interval > 0 and _sequence % interval == 0
+            head_sequence, head_signature = sequence, signature
+
+        with bound_contextvars(request_id=request_id):
+            self._logger.info(REVEAL_EVENT_NAME, **event)
 
         if checkpoint_due:
             self._emit_checkpoint(sequence=head_sequence, head_signature=head_signature)

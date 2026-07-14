@@ -368,6 +368,77 @@ def test_tampered_checkpoint_rejected() -> None:
     assert verify_checkpoint(cp, key) is False
 
 
+# --- Reveal events (reveal_served / reveal_rejected): a second event type sharing
+# the same chain, mirroring the trust-change event's mechanics exactly. ---
+
+
+def test_build_reveal_event_keys_match_signed_fields() -> None:
+    from terminus.audit.audit_logger import REVEAL_SIGNED_FIELDS
+
+    event = AuditLogger._build_reveal_event(
+        request_id="r1",
+        reveal_id="rev-1",
+        operator_id="op1",
+        event_type="reveal_served",
+        reason_code=None,
+        sql_sha256="digest-1",
+        bundle_sha256="bundle-digest-1",
+    )
+    assert set(event.keys()) == set(REVEAL_SIGNED_FIELDS)
+
+
+def _emit_decision_and_reveal_chain() -> list[str]:
+    """One log_decision then one log_reveal on the SAME chain (shared
+    _audit_lock/_last_signature/_sequence), mirroring the trust-change
+    interleaving test: proves the two event kinds link and verify together."""
+    buf = io.StringIO()
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.processors.JSONRenderer(),
+        ],
+        logger_factory=structlog.PrintLoggerFactory(file=buf),
+        cache_logger_on_first_use=False,
+    )
+    try:
+        al._last_signature = al.GENESIS_SIGNATURE
+        al._sequence = 0
+        logger = al.AuditLogger()
+        parsed = parse_sql(_SQLS[0])
+        decision = PolicyEngine.from_default_policy().evaluate(
+            parsed, agent_id="analytics_agent_42"
+        )
+        logger.log_decision(
+            request_id="r1",
+            sql=_SQLS[0],
+            agent_id="analytics_agent_42",
+            parsed_sql=parsed,
+            decision=decision,
+            remediation_present=False,
+        )
+        logger.log_reveal(
+            request_id="r1",
+            reveal_id="rev-1",
+            operator_id="op1",
+            event_type="reveal_served",
+            reason_code=None,
+            sql_sha256="digest-1",
+            bundle_sha256="bundle-digest-1",
+        )
+        return [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+    finally:
+        al.configure_logging()  # restore the production logging config
+
+
+def test_decision_and_reveal_chain_round_trips() -> None:
+    lines = _emit_decision_and_reveal_chain()
+    result = verify_audit_chain(lines, get_settings().audit_hmac_key, require_genesis=True)
+    assert result.ok, result.failures
+    assert result.verified_count == 2
+
+
 def test_periodic_checkpoints_capture_head(monkeypatch, reset_auth_caches) -> None:
     # With an interval of 2, emitting 4 decisions must drop a signed checkpoint of
     # the head after events 1 and 3, so a SIEM can capture the head out-of-band.

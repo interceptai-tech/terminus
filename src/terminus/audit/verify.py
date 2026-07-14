@@ -1,20 +1,23 @@
 """Independent verification of the Terminus audit HMAC chain.
 
-Verifies two event kinds sharing ONE chain: terminus_intercept_decision (policy
-decisions) and terminus_trust_level_change (graduated-autonomy promotions/demotions).
-Both carry sequence/event_signature/previous_signature against the same running
-prev_signature, so interleaving them, deleting either kind, or reordering across
+Verifies three event kinds sharing ONE chain: terminus_intercept_decision (policy
+decisions), terminus_trust_level_change (graduated-autonomy promotions/demotions),
+and terminus_reveal_event (plane reveal-round-trip serve/reject outcomes). All
+three carry sequence/event_signature/previous_signature against the same running
+prev_signature, so interleaving them, deleting any kind, or reordering across
 kinds all trip the same linkage/sequence checks below.
 
 Reconstructs each signed payload by SELECTING the signed field set for that line's
 event name and schema_version (decision lines: no schema_version uses the frozen v1
-set, schema_version 2 uses the frozen v2 set, the current AUDIT_SCHEMA_VERSION uses
-the live AUDIT_SIGNED_FIELDS; trust-change lines: schema_version 1 uses
-TRUST_CHANGE_SIGNED_FIELDS; any other value, for either kind, fails closed with
-unknown_schema_version), recomputes the signature with the real signer, and checks
-the previous_signature linkage. O(n) and streamable: holds only the running
-prev_signature plus collected failures, so memory is bounded by the failure count,
-not the log size. Verify large histories in start_signature-anchored chunks.
+set, schema_version 2 uses the frozen v2 set, schema_version 3 uses the frozen v3
+set, the current AUDIT_SCHEMA_VERSION uses the live AUDIT_SIGNED_FIELDS;
+trust-change lines: schema_version 1 uses TRUST_CHANGE_SIGNED_FIELDS; reveal-event
+lines: schema_version 1 uses REVEAL_SIGNED_FIELDS; any other value, for any kind,
+fails closed with unknown_schema_version), recomputes the signature with the real
+signer, and checks the previous_signature linkage. O(n) and streamable: holds only
+the running prev_signature plus collected failures, so memory is bounded by the
+failure count, not the log size. Verify large histories in start_signature-anchored
+chunks.
 """
 
 from __future__ import annotations
@@ -28,12 +31,15 @@ from terminus.audit.audit_logger import (
     AUDIT_SCHEMA_VERSION,
     AUDIT_SIGNED_FIELDS,
     GENESIS_SIGNATURE,
+    REVEAL_EVENT_NAME,
+    REVEAL_SIGNED_FIELDS,
     TRUST_CHANGE_SIGNED_FIELDS,
     _sign_event,
 )
 
 _AUDIT_EVENT_NAME = "terminus_intercept_decision"
 _TRUST_EVENT_NAME = "terminus_trust_level_change"
+_REVEAL_EVENT_NAME = REVEAL_EVENT_NAME
 _SNIPPET_MAX = 120
 
 # Frozen copy of the v1 signed field set (pre-schema_version history). Copied
@@ -88,6 +94,38 @@ _SIGNED_FIELDS_V2: tuple[str, ...] = (
     "mcp_approval_status",
 )
 
+# Frozen copy of the v3 signed field set (schema v3 with graduated-autonomy
+# evidence). Added enforcement_mode, would_deny, would_deny_reason_code on top
+# of v2. v4 extends this with operator_id, approval_source (who approved a
+# hold and via which channel). Copied verbatim so v4+ signer changes never
+# silently rewrite v3's contract.
+_SIGNED_FIELDS_V3: tuple[str, ...] = (
+    "event_time",
+    "request_id",
+    "agent_id",
+    "agent_authenticated",
+    "decision",
+    "reason",
+    "reason_code",
+    "policy_id",
+    "operation",
+    "tables",
+    "risk_score",
+    "risk_reasons",
+    "remediation_present",
+    "rewrite_suggested",
+    "sql_sha256",
+    "security_flags",
+    "metadata_keys",
+    "sequence",
+    "schema_version",
+    "mcp_tool",
+    "mcp_approval_status",
+    "enforcement_mode",
+    "would_deny",
+    "would_deny_reason_code",
+)
+
 
 def _fields_for_version(version: object) -> tuple[str, ...] | None:
     """Signed field set for a decision line's schema_version; None = unknown (fail closed)."""
@@ -95,6 +133,8 @@ def _fields_for_version(version: object) -> tuple[str, ...] | None:
         return _SIGNED_FIELDS_V1
     if version == 2:
         return _SIGNED_FIELDS_V2
+    if version == 3:
+        return _SIGNED_FIELDS_V3
     if version == AUDIT_SCHEMA_VERSION:
         return AUDIT_SIGNED_FIELDS
     return None
@@ -105,12 +145,15 @@ def _select_fields(event_name: str, version: object) -> tuple[str, ...] | None:
 
     None means unknown version for that kind: the caller routes this to the same
     unknown_schema_version failure path used for decision lines, so an unrecognized
-    trust-change schema_version fails closed exactly like an unrecognized decision one.
+    trust-change or reveal-event schema_version fails closed exactly like an
+    unrecognized decision one.
     """
     if event_name == _AUDIT_EVENT_NAME:
         return _fields_for_version(version)
     if event_name == _TRUST_EVENT_NAME:
         return TRUST_CHANGE_SIGNED_FIELDS if version == 1 else None
+    if event_name == _REVEAL_EVENT_NAME:
+        return REVEAL_SIGNED_FIELDS if version == 1 else None
     return None  # unreachable: caller filters names first
 
 
@@ -214,8 +257,8 @@ def verify_audit_chain(
                 "log line is not valid JSON", line_index=raw_index, snippet=line
             ) from exc
         event_name = event.get("event") if isinstance(event, dict) else None
-        if event_name not in (_AUDIT_EVENT_NAME, _TRUST_EVENT_NAME):
-            continue  # not a decision or trust-change line (e.g. checkpoint, foreign)
+        if event_name not in (_AUDIT_EVENT_NAME, _TRUST_EVENT_NAME, _REVEAL_EVENT_NAME):
+            continue  # not a decision/trust-change/reveal line (e.g. checkpoint, foreign)
 
         version = event.get("schema_version")
         fields = _select_fields(event_name, version)

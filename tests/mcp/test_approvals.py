@@ -20,7 +20,7 @@ async def test_approve_releases_grant():
         assert broker.approve(rid) is True
 
     task = asyncio.create_task(approver())
-    result, grant = await broker.wait(rid, timeout=1.0)
+    result, grant, _provenance = await broker.wait(rid, timeout=1.0)
     await task
     assert result is ApprovalResult.APPROVED
     assert grant is not None and grant.statement == "UPDATE t SET x=1"
@@ -36,7 +36,7 @@ async def test_deny_returns_no_grant():
         broker.deny(rid)
 
     task = asyncio.create_task(denier())
-    result, grant = await broker.wait(rid, timeout=1.0)
+    result, grant, _provenance = await broker.wait(rid, timeout=1.0)
     await task
     assert result is ApprovalResult.DENIED
     assert grant is None
@@ -50,7 +50,7 @@ async def test_first_decision_wins_deny_is_sticky():
     rid = broker.submit(_grant(), reason="high risk")
     assert broker.deny(rid) is True
     assert broker.approve(rid) is False
-    result, grant = await broker.wait(rid, timeout=1.0)
+    result, grant, _provenance = await broker.wait(rid, timeout=1.0)
     assert result is ApprovalResult.DENIED
     assert grant is None
 
@@ -58,7 +58,27 @@ async def test_first_decision_wins_deny_is_sticky():
 async def test_timeout_expires_as_no_grant():
     broker = ApprovalBroker()
     rid = broker.submit(_grant(), reason="high risk")
-    result, grant = await broker.wait(rid, timeout=0.05)
+    result, grant, provenance = await broker.wait(rid, timeout=0.05)
     assert result is ApprovalResult.EXPIRED
     assert grant is None
+    assert provenance is None
     assert rid not in broker.pending()
+
+
+async def test_wait_returns_operator_provenance() -> None:
+    broker = ApprovalBroker()
+    rid = broker.submit(_grant(), reason="high risk")
+    assert broker.approve(rid, operator_id="alice", source="plane") is True
+    result, _got, provenance = await broker.wait(rid, timeout=1.0)
+    assert result is ApprovalResult.APPROVED
+    assert provenance is not None
+    assert provenance.operator_id == "alice"
+    assert provenance.source == "plane"
+
+
+async def test_wait_timeout_has_no_provenance() -> None:
+    broker = ApprovalBroker()
+    rid = broker.submit(_grant(), reason="high risk")
+    result, _released_grant, provenance = await broker.wait(rid, timeout=0.01)
+    assert result is ApprovalResult.EXPIRED
+    assert provenance is None

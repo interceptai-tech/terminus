@@ -8,6 +8,7 @@ reference PEP; a shared-store broker for HA is a fast-follow.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from enum import StrEnum
 from uuid import uuid4
 
@@ -20,14 +21,24 @@ class ApprovalResult(StrEnum):
     EXPIRED = "expired"
 
 
+@dataclass(frozen=True)
+class ApprovalProvenance:
+    """Who resolved a hold and via which channel ("plane" = remote operator
+    console through the control plane; "local" = an in-process resolution)."""
+
+    operator_id: str | None
+    source: str
+
+
 class _Pending:
-    __slots__ = ("grant", "reason", "event", "result")
+    __slots__ = ("grant", "reason", "event", "result", "provenance")
 
     def __init__(self, grant: ExecutionGrant, reason: str) -> None:
         self.grant = grant
         self.reason = reason
         self.event = asyncio.Event()
         self.result: ApprovalResult | None = None
+        self.provenance: ApprovalProvenance | None = None
 
 
 class ApprovalBroker:
@@ -59,7 +70,22 @@ class ApprovalBroker:
     def pending(self) -> list[str]:
         return list(self._pending)
 
-    def _resolve(self, request_id: str, result: ApprovalResult) -> bool:
+    def statement(self, request_id: str) -> str | None:
+        """Read-only lookup of the held statement, for reveal-serving only.
+
+        Never mutates the broker (no pop, no result set) -- the grant itself
+        never leaves the broker; only the raw statement string is handed back,
+        for the caller to seal into an encrypted reveal response."""
+        entry = self._pending.get(request_id)
+        return entry.grant.statement if entry else None
+
+    def _resolve(
+        self,
+        request_id: str,
+        result: ApprovalResult,
+        *,
+        provenance: ApprovalProvenance,
+    ) -> bool:
         entry = self._pending.get(request_id)
         if entry is None:
             return False
@@ -70,21 +96,34 @@ class ApprovalBroker:
         if entry.result is not None:
             return False
         entry.result = result
+        entry.provenance = provenance
         entry.event.set()
         return True
 
-    def approve(self, request_id: str) -> bool:
-        return self._resolve(request_id, ApprovalResult.APPROVED)
+    def approve(
+        self, request_id: str, *, operator_id: str | None = None, source: str = "plane"
+    ) -> bool:
+        return self._resolve(
+            request_id,
+            ApprovalResult.APPROVED,
+            provenance=ApprovalProvenance(operator_id=operator_id, source=source),
+        )
 
-    def deny(self, request_id: str) -> bool:
-        return self._resolve(request_id, ApprovalResult.DENIED)
+    def deny(
+        self, request_id: str, *, operator_id: str | None = None, source: str = "plane"
+    ) -> bool:
+        return self._resolve(
+            request_id,
+            ApprovalResult.DENIED,
+            provenance=ApprovalProvenance(operator_id=operator_id, source=source),
+        )
 
     async def wait(
         self, request_id: str, *, timeout: float
-    ) -> tuple[ApprovalResult, ExecutionGrant | None]:
+    ) -> tuple[ApprovalResult, ExecutionGrant | None, ApprovalProvenance | None]:
         entry = self._pending.get(request_id)
         if entry is None:
-            return ApprovalResult.EXPIRED, None
+            return ApprovalResult.EXPIRED, None, None
         try:
             await asyncio.wait_for(entry.event.wait(), timeout=timeout)
         except TimeoutError:
@@ -93,4 +132,8 @@ class ApprovalBroker:
             self._pending.pop(request_id, None)
         result = entry.result or ApprovalResult.EXPIRED
         grant = entry.grant if result is ApprovalResult.APPROVED else None
-        return result, grant
+        # No provenance on a timeout: nobody resolved it, so there is no
+        # operator/channel to attribute -- entry.provenance stays whatever it
+        # was default-initialized to (None) in that case.
+        provenance = entry.provenance if result is not ApprovalResult.EXPIRED else None
+        return result, grant, provenance

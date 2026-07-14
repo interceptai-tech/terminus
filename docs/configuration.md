@@ -652,6 +652,16 @@ byte-for-byte unchanged when these are unset.
 - **When to change:** adjust based on your approval response-time requirements.
 - **Interacts with:** nothing functional.
 
+
+**`TERMINUS_MCP_APPROVAL_MAX_HOLDS`**
+
+- **Default:** `32`
+- Bound on concurrently pending holds. At the bound, a new high-risk write is
+  denied immediately (`reason_code="max_holds_exceeded"`, no structured
+  `remediation` object) instead of being held (fail-closed availability; a
+  hold flood cannot bypass policy). Watch `terminus_holds_active`.
+- **Interacts with:** `TERMINUS_MCP_APPROVAL_TIMEOUT_SECONDS`.
+
 ---
 
 ## 11. Graduated autonomy (per-agent trust promotion)
@@ -670,6 +680,9 @@ enforce mode by operators. When disabled, all agents are treated as enforce
 - **When to change:** enable it once the graduated autonomy feature is
   operationally ready and agents have been evaluated in observe mode.
 - **Interacts with:** `TERMINUS_AGENT_REGISTRY_PATH` (where trust_level is set).
+
+---
+
 
 ---
 

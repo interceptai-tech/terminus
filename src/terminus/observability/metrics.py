@@ -187,6 +187,43 @@ SIGNATURE_EMITTER_ERRORS = Counter(
     ["leg"],
 )
 
+# --- Control-plane deployment client (part E) ---
+PLANE_COURIER_POLLS = Counter(
+    "terminus_plane_courier_polls_total",
+    "Relay long-poll outcomes from the deployment courier",
+    ["result"],  # ok | empty | error
+)
+PLANE_DECISIONS = Counter(
+    "terminus_plane_decisions_total",
+    "Decision-courier dispositions",
+    ["outcome"],  # approved | denied | unverified | unknown_request
+)
+PLANE_SUBMIT = Counter(
+    "terminus_plane_submit_total",
+    "Held-write submissions to the plane",
+    ["result"],  # ok | error
+)
+PLANE_ACK = Counter(
+    "terminus_plane_ack_total",
+    "Plane hold acks from the courier",
+    ["result"],  # ok | error
+)
+PLANE_REVEALS = Counter(
+    "terminus_reveals_total",
+    "Reveal requests handled by the courier, by outcome reason code",
+    # served | malformed | bad_cipher_suite | bad_recipient_key |
+    # request_id_mismatch | wrong_tenant | wrong_deployment | unknown_request |
+    # digest_mismatch | bundle_mismatch | expired | exp_too_far |
+    # unknown_operator | revoked_operator | bad_signature | replayed_reveal_id |
+    # unknown_kind | serve_post_failed | reject_post_failed | unsafe_request_id |
+    # audit_unavailable
+    ["outcome"],
+)
+HOLDS_ACTIVE = Gauge(
+    "terminus_holds_active",
+    "High-risk writes currently held awaiting human approval",
+)
+
 
 def record_outbound_sent(count: int) -> None:
     """Record payloads successfully POSTed (after any number of retries)."""
