@@ -2,8 +2,7 @@
 
 > **What this file is:** the architecture and orientation guide a senior engineer
 > would hand a new hire (human or AI). Read this first for *how the system is
-> shaped and why*. For *known weaknesses* see `GAPS.md`. For *how to operate the
-> repo day to day* (commands, conventions, gotchas) see `CLAUDE.md`.
+> shaped and why*.
 >
 > The project's non-negotiable principles and contribution workflow are preserved
 > verbatim at the bottom of this file (see "Project Charter").
@@ -201,7 +200,7 @@ crash the request.
   derived from the *local* policy, so two deployments with different whitelists
   compute different fingerprints for the same query. Cross-deployment immunity
   therefore scopes to deployments that classify an asset the same way. This is the
-  honest claim; it is not "universal regardless of config" (see HANDOVER.md).
+  honest claim; it is not "universal regardless of config".
 
 - **Secrets guard at boot.** The shipped default secrets are ≥32 bytes (so local
   dev works with zero setup), which means a length check alone can't catch them.
@@ -256,7 +255,7 @@ Prometheus provisioning is config not code, `demo/out/**` render artifacts.
    the signature store, and the audit chain state are all per-process globals.
    Tests must reset caches (see `tests/conftest.py` `reset_*` fixtures) after
    `monkeypatch.setenv`. This also means **multi-worker deployments fragment
-   state** — see GAPS.md.
+   state** (the boot guard enforces single-worker).
 4. **The audit chain resets to genesis every process start.** It is process-scoped
    by design (documented limitation). Durable cross-restart chaining is future work.
 5. **`fastapi-limiter` is pinned to 0.1.5** and wrapped by `_SafeRateLimiter`
@@ -269,12 +268,8 @@ Prometheus provisioning is config not code, `demo/out/**` render artifacts.
    only — never identifier *normalization*, which is pinned to the trusted
    `TERMINUS_SQL_DIALECT`. Mixing these up reopens a whitelist-bypass (F10c).
 8. **CI installs `httpx2`** (an unpinned, undeclared package) alongside deps —
-   it's what current Starlette's TestClient wants, but it's a rough edge (GAPS.md).
-9. **Repo carries a lot of process cruft:** `.claude/worktrees/` (agent worktrees),
-   `.superpowers/sdd/*.diff` (review ledger, gitignored), and `docs/superpowers/`
-   (per-feature brainstorm→spec→plan artifacts). The specs/plans are genuinely
-   useful design history; the diffs are noise.
-10. **Signature/velocity/outbound subsystems are large but mostly OFF by default.**
+   it's what current Starlette's TestClient wants, but it's a rough edge.
+9. **Signature/velocity/outbound subsystems are large but mostly OFF by default.**
     `signatures_enabled=true` (emit only, local); matching, enforce, outbound,
     velocity, and config-reload are all default-OFF. Reading the code, assume the
     inert path unless a `TERMINUS_*` flag is set.
@@ -285,14 +280,10 @@ Prometheus provisioning is config not code, `demo/out/**` render artifacts.
 
 - `README.md` — user-facing quick start, API contract, env-var table, metrics.
 - `SECURITY.md` — the authoritative security-model writeup (per-control detail).
-- `HANDOVER.md` — dense chronological record of every feature sprint (F3–F11, the
-  signature flywheel, JWT, GitOps, PoV, demo). Best source for *why a thing exists*.
 - `docs/configuration.md`, `docs/operations.md`, `docs/integration.md` — the
   reference docs (kept in-sync-per-commit per the Charter).
 - `docs/capabilities/*.md` — one explainer per subsystem.
-- `docs/superpowers/specs|plans/*` — design docs per feature, dated.
-- `GAPS.md` — honest weakness audit.
-- `CLAUDE.md` — operational cheat-sheet for future sessions.
+
 
 ---
 ---
