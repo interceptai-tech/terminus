@@ -436,9 +436,139 @@ class ToolService:
         )
 
 
+class _ServiceInitializer:
+    """Builds the process's single ToolService stack, exactly once, even under a
+    race between the first concurrent tool calls.
+
+    `build_server`'s tools each `await get()` before serving. The build has
+    several awaits (pool creation, plane enrollment, courier startup), so a naive
+    check-then-act would let two concurrent first calls both pass the "not built
+    yet" check and construct TWO independent stacks -- two ApprovalBrokers, two
+    PendingHolds, two RevealLedgers, two couriers competing for one deployment's
+    relay stream. That makes reveals fail `unknown_request` and silently drops
+    decisions (observed live with two concurrent holds). The lock + double-check
+    below collapses concurrent first calls onto one stack. Kept FastMCP-free so
+    the race is unit-testable without the MCP server SDK.
+    """
+
+    def __init__(self, settings: TerminusSettings, agent_id: str) -> None:
+        self._settings = settings
+        self._agent_id = agent_id
+        self._svc: ToolService | None = None
+        self._lock = asyncio.Lock()
+        # Holds the courier task so it is not garbage-collected mid-flight.
+        self.background: dict[str, Any] = {}
+
+    async def get(self) -> ToolService:
+        # Fast path: already built, no lock needed (assignment is the last step
+        # of _build, so a visible _svc means the stack is fully wired).
+        if self._svc is not None:
+            return self._svc
+        async with self._lock:
+            # Double-check: a racer may have finished _build while we waited.
+            if self._svc is not None:
+                return self._svc
+            self._svc = await self._build()
+            return self._svc
+
+    async def _build(self) -> ToolService:
+        import asyncpg  # type: ignore[import-untyped]
+
+        settings = self._settings
+        agent_id = self._agent_id
+        background = self.background
+        pool = await asyncpg.create_pool(dsn=settings.mcp_postgres_dsn)
+        broker = ApprovalBroker()
+        audit_logger = AuditLogger()
+        plane_client = None
+        pending_holds = None
+        plane_context = None
+        reveal_ledger = None
+        if settings.plane_enabled:
+            from terminus.plane.client import PlaneClient
+            from terminus.plane.courier import PendingHolds, run_courier
+            from terminus.plane.enrollment import load_plane_context
+            from terminus.plane.nonce import build_seen_nonces_pair
+            from terminus.plane.reveal import RevealLedger
+
+            ctx = load_plane_context(settings)
+            plane_context = ctx
+            http = httpx.AsyncClient(
+                base_url=settings.plane_base_url,
+                timeout=httpx.Timeout(settings.plane_poll_wait_seconds + 10),
+            )
+            plane_client = PlaneClient(identity=ctx.identity, http=http)
+            pending_holds = PendingHolds()
+            # ONE shared instance, passed BY REFERENCE to both run_courier
+            # below and ToolService further down: the courier drops a
+            # record on unknown_request, and ToolService._handle drops one
+            # on local timeout/deny. Eviction on a different RevealLedger
+            # object is a silent no-op, so this must not be constructed
+            # twice.
+            reveal_ledger = RevealLedger()
+            # Empty TERMINUS_PLANE_NONCE_PATH keeps today's in-memory-only
+            # behavior; a non-empty path backs both stores with a disk
+            # journal (see docs/configuration.md) so replay protection
+            # survives a process restart.
+            decision_nonces, reveal_nonces = build_seen_nonces_pair(
+                settings.plane_nonce_path, ttl_seconds=settings.plane_nonce_ttl_seconds
+            )
+            # Lives for the process lifetime: a stdio MCP server runs until the
+            # transport closes, matching the process-scoped broker and audit
+            # chain (see mcp/__main__.py; the courier is NOT started there).
+            # Same AuditLogger instance as ToolService below (constructed
+            # once above): reveal_served/reveal_rejected land on the same
+            # process-scoped chain as decision/trust-change events, so
+            # production always audits reveals, never just unit tests that
+            # explicitly wire one up.
+            courier_task = asyncio.create_task(
+                run_courier(
+                    client=plane_client,
+                    broker=broker,
+                    context=ctx,
+                    pending=pending_holds,
+                    poll_wait=settings.plane_poll_wait_seconds,
+                    poll_batch=settings.plane_poll_batch,
+                    seen_nonces=decision_nonces,
+                    reveal_ledger=reveal_ledger,
+                    reveal_nonces=reveal_nonces,
+                    audit=audit_logger,
+                )
+            )
+
+            def _courier_done(t: asyncio.Task[None]) -> None:
+                # run_courier is fail-closed and never raises out of its own
+                # loop, so a non-cancelled exception here means the task died
+                # some other way (e.g. a bug). Log it: a silently-dead courier
+                # otherwise looks identical to a healthy one that is simply idle.
+                if t.cancelled():
+                    return
+                exc = t.exception()
+                if exc is not None:
+                    _log.warning(
+                        "plane_courier_exited",
+                        error_class=type(exc).__name__,
+                        reason_code="plane_courier_exited",
+                    )
+
+            courier_task.add_done_callback(_courier_done)
+            background["courier"] = courier_task
+        return ToolService(
+            settings=settings,
+            policy_engine=get_policy_engine(),
+            executor=Executor(_AsyncpgPool(pool)),
+            broker=broker,
+            audit_logger=audit_logger,
+            agent_id=agent_id,
+            plane_client=plane_client,
+            pending_holds=pending_holds,
+            plane_context=plane_context,
+            reveal_ledger=reveal_ledger,
+        )
+
+
 def build_server() -> Any:
     """Wire ToolService to a FastMCP server. SDK-specific; verify against installed mcp."""
-    import asyncpg  # type: ignore[import-untyped]
     from mcp.server.fastmcp import FastMCP
 
     settings = get_settings()
@@ -446,110 +576,21 @@ def build_server() -> Any:
     agent_id = resolve_agent_id(settings, registry)
 
     mcp = FastMCP("terminus")
-    service_holder: dict[str, ToolService] = {}
-    background: dict[str, Any] = {}
-
-    async def _service() -> ToolService:
-        if "svc" not in service_holder:
-            pool = await asyncpg.create_pool(dsn=settings.mcp_postgres_dsn)
-            broker = ApprovalBroker()
-            audit_logger = AuditLogger()
-            plane_client = None
-            pending_holds = None
-            plane_context = None
-            reveal_ledger = None
-            if settings.plane_enabled:
-                from terminus.plane.client import PlaneClient
-                from terminus.plane.courier import PendingHolds, run_courier
-                from terminus.plane.enrollment import load_plane_context
-                from terminus.plane.nonce import build_seen_nonces_pair
-                from terminus.plane.reveal import RevealLedger
-
-                ctx = load_plane_context(settings)
-                plane_context = ctx
-                http = httpx.AsyncClient(
-                    base_url=settings.plane_base_url,
-                    timeout=httpx.Timeout(settings.plane_poll_wait_seconds + 10),
-                )
-                plane_client = PlaneClient(identity=ctx.identity, http=http)
-                pending_holds = PendingHolds()
-                # ONE shared instance, passed BY REFERENCE to both run_courier
-                # below and ToolService further down: the courier drops a
-                # record on unknown_request, and ToolService._handle drops one
-                # on local timeout/deny. Eviction on a different RevealLedger
-                # object is a silent no-op, so this must not be constructed
-                # twice.
-                reveal_ledger = RevealLedger()
-                # Empty TERMINUS_PLANE_NONCE_PATH keeps today's in-memory-only
-                # behavior; a non-empty path backs both stores with a disk
-                # journal (see docs/configuration.md) so replay protection
-                # survives a process restart.
-                decision_nonces, reveal_nonces = build_seen_nonces_pair(
-                    settings.plane_nonce_path, ttl_seconds=settings.plane_nonce_ttl_seconds
-                )
-                # Lives for the process lifetime: a stdio MCP server runs until the
-                # transport closes, matching the process-scoped broker and audit
-                # chain (see mcp/__main__.py; the courier is NOT started there).
-                # Same AuditLogger instance as ToolService below (constructed
-                # once above): reveal_served/reveal_rejected land on the same
-                # process-scoped chain as decision/trust-change events, so
-                # production always audits reveals, never just unit tests that
-                # explicitly wire one up.
-                courier_task = asyncio.create_task(
-                    run_courier(
-                        client=plane_client,
-                        broker=broker,
-                        context=ctx,
-                        pending=pending_holds,
-                        poll_wait=settings.plane_poll_wait_seconds,
-                        poll_batch=settings.plane_poll_batch,
-                        seen_nonces=decision_nonces,
-                        reveal_ledger=reveal_ledger,
-                        reveal_nonces=reveal_nonces,
-                        audit=audit_logger,
-                    )
-                )
-
-                def _courier_done(t: asyncio.Task[None]) -> None:
-                    # run_courier is fail-closed and never raises out of its own
-                    # loop, so a non-cancelled exception here means the task died
-                    # some other way (e.g. a bug). Log it: a silently-dead courier
-                    # otherwise looks identical to a healthy one that is simply idle.
-                    if t.cancelled():
-                        return
-                    exc = t.exception()
-                    if exc is not None:
-                        _log.warning(
-                            "plane_courier_exited",
-                            error_class=type(exc).__name__,
-                            reason_code="plane_courier_exited",
-                        )
-
-                courier_task.add_done_callback(_courier_done)
-                background["courier"] = courier_task
-            service_holder["svc"] = ToolService(
-                settings=settings,
-                policy_engine=get_policy_engine(),
-                executor=Executor(_AsyncpgPool(pool)),
-                broker=broker,
-                audit_logger=audit_logger,
-                agent_id=agent_id,
-                plane_client=plane_client,
-                pending_holds=pending_holds,
-                plane_context=plane_context,
-                reveal_ledger=reveal_ledger,
-            )
-        return service_holder["svc"]
+    # Exactly one initializer per process: call build_server() ONCE (see
+    # __main__.py). The initializer collapses concurrent first tool calls onto a
+    # single service stack, but two build_server() calls would create two
+    # initializers -> two brokers/couriers competing for one deployment's relay.
+    initializer = _ServiceInitializer(settings, agent_id)
 
     @mcp.tool()
     async def query(sql: str) -> dict[str, Any]:
         """Run a read-only SELECT, gated by Terminus policy."""
-        return await (await _service()).query(sql)
+        return await (await initializer.get()).query(sql)
 
     @mcp.tool()
     async def execute(sql: str) -> dict[str, Any]:
         """Run a write, gated by Terminus policy; high-risk writes need human approval."""
-        return await (await _service()).execute(sql)
+        return await (await initializer.get()).execute(sql)
 
     return mcp
 
