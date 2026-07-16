@@ -175,6 +175,22 @@ whitelist is checked before the policy rules.
 - **When to change:** set it to the dialect of the database your agents
   actually query, if that database is not PostgreSQL or another
   lowercase-folding database. Leave it empty for PostgreSQL.
+- **Validated dialects:** PostgreSQL (default/empty) is validated end-to-end,
+  including the MCP enforcement executor (`python -m terminus.mcp`).
+  `snowflake` is corpus-validated and shadow-ready: the PoV harness
+  (`TERMINUS_SQL_DIALECT=snowflake PYTHONPATH=src uv run python -m pov.harness
+  --corpus pov/corpus_snowflake.yaml`) passes a dedicated Snowflake corpus at
+  the Postgres-equivalent accuracy gate, but no Snowflake executor exists yet,
+  so this dialect covers the `/intercept` decision API only; the caller
+  executes the SQL and holds the credentials itself. Other listed dialects
+  are parsed by sqlglot but not corpus-validated.
+- **Known limitation:** whitelist/policy identifiers are folded as unquoted
+  per this dialect's case rules, so a genuinely quoted mixed-case object
+  (for example Snowflake's `"Orders"`) can never match the folded whitelist
+  entry and is denied: a fail-closed over-deny, not a bypass (see
+  `docs/capabilities/policy-and-whitelists.md`). Workaround: name objects
+  unquoted so they fold naturally, or write the whitelist entry in the
+  dialect's folded case.
 - **Interacts with:** `TERMINUS_POLICY_PATH`, `TERMINUS_SCHEMA_WHITELIST_PATH`
   (both are normalized against this dialect on load).
 

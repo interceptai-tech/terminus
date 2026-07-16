@@ -60,9 +60,20 @@ PYTHONPATH=src uv run python -m pov.harness \
 
 ```
 --out DIR       Output directory for artifacts (default: pov/out)
+--corpus PATH   Path to the corpus YAML (default: pov/corpus.yaml)
 --url URL       Running Terminus base URL for the deployed-latency sweep
 --qps LIST      Comma-separated QPS targets (default: 50,100,200)
 --seconds N     Seconds per QPS step (default: 20)
+```
+
+### Snowflake corpus run
+
+`pov/corpus_snowflake.yaml` is a 248-entry Snowflake-native corpus (all nine
+tagged categories), validated at the Postgres-equivalent gate. Run it with the
+Snowflake dialect set so identifier folding matches Snowflake's rules:
+
+```bash
+TERMINUS_SQL_DIALECT=snowflake PYTHONPATH=src uv run python -m pov.harness --corpus pov/corpus_snowflake.yaml
 ```
 
 ## Artifacts

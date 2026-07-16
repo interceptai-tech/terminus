@@ -49,10 +49,16 @@ def _capture_structlog_to_buffer() -> io.StringIO:
 
 
 def run_in_process(
-    *, out_dir: str | Path, entries: Sequence[CorpusEntry] | None = None
+    *,
+    out_dir: str | Path,
+    entries: Sequence[CorpusEntry] | None = None,
+    corpus_path: str | Path | None = None,
 ) -> RunResult:
     """Run the functional, audit, and in-process latency passes (no server)."""
-    corpus = list(entries) if entries is not None else load_corpus(_CORPUS)
+    if entries is not None:
+        corpus = list(entries)
+    else:
+        corpus = load_corpus(corpus_path if corpus_path is not None else _CORPUS)
     settings = get_settings()
 
     # Reset the segment counter alongside the head so the run's chain starts at
@@ -89,6 +95,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--out", default="pov/out", help="output directory for artifacts")
     parser.add_argument(
+        "--corpus", default=None, help="path to the corpus YAML (default: pov/corpus.yaml)"
+    )
+    parser.add_argument(
         "--url", default=None, help="running Terminus base URL for the deployed-latency sweep"
     )
     parser.add_argument(
@@ -97,10 +106,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--seconds", type=int, default=20, help="seconds per QPS step")
     args = parser.parse_args(argv)
 
-    result = run_in_process(out_dir=args.out)
+    result = run_in_process(out_dir=args.out, corpus_path=args.corpus)
 
     if args.url:
-        corpus = load_corpus(_CORPUS)
+        corpus = load_corpus(args.corpus if args.corpus is not None else _CORPUS)
         for qps in (int(q) for q in args.qps.split(",")):
             result.deployed_latency.append(
                 asyncio.run(deployed_latency(args.url, corpus, qps=qps, seconds=args.seconds))

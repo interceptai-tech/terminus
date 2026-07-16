@@ -105,6 +105,18 @@ INJECTION_FUNCTION_NAMES = frozenset(
         "dblink",
         "pg_terminate_backend",
         "pg_cancel_backend",
+        # Snowflake side-effecting SYSTEM$ primitives (time-based / session+txn abort).
+        # AST-matched like the rest; the "$" is preserved by node.name. Benign SYSTEM$
+        # introspection (system$typeof, system$clustering_*, ...) is deliberately NOT
+        # listed so it is not over-denied. See test_snowflake_injection_vocab.py.
+        "system$wait",
+        "system$abort_session",
+        "system$abort_transaction",
+        "system$cancel_query",
+        "system$cancel_all_queries",
+        "system$wait_for_services",
+        "system$send_email",
+        "system$send_snowflake_notification",
     }
 )
 
